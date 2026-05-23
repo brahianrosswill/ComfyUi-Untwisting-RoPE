@@ -27,5 +27,5 @@ Restart ComfyUI after installation.
 
 ## Usage
 
-Here's a [workflow](https://github.com/BigStationW/ComfyUi-Untwisting-RoPE/blob/main/Workflow.json) for those interested.
+Here's a [workflow](https://github.com/BigStationW/ComfyUi-Untwisting-RoPE/blob/main/Workflow_zimage_turbo.json) for those interested.
 You also need this [custom node](https://github.com/BigStationW/ComfyUi-Scale-Image-to-Total-Pixels-Advanced) to make it work.
