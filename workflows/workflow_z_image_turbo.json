@@ -1,8 +1,8 @@
 {
   "id": "44259803-f9d6-4eb1-a94a-75b8213649d0",
   "revision": 0,
-  "last_node_id": 622,
-  "last_link_id": 1548,
+  "last_node_id": 623,
+  "last_link_id": 1552,
   "nodes": [
     {
       "id": 333,
@@ -64,7 +64,7 @@
         {
           "name": "model",
           "type": "MODEL",
-          "link": 1531
+          "link": 1551
         },
         {
           "name": "positive",
@@ -587,29 +587,6 @@
       ]
     },
     {
-      "id": 611,
-      "type": "Note",
-      "pos": [
-        1138.7779877296477,
-        976.9595237013522
-      ],
-      "size": [
-        289.0740052806825,
-        112.57343506692268
-      ],
-      "flags": {},
-      "order": 9,
-      "mode": 0,
-      "inputs": [],
-      "outputs": [],
-      "properties": {},
-      "widgets_values": [
-        "The only relevant values to change are :\n\n- high_scale_start: (between 1.0 and 1.15) \n- low_scale_end: (between 3.0 and 4.0)"
-      ],
-      "color": "#c09430",
-      "bgcolor": "rgba(24,24,27,.9)"
-    },
-    {
       "id": 615,
       "type": "Note",
       "pos": [
@@ -621,7 +598,7 @@
         112.57343506692268
       ],
       "flags": {},
-      "order": 10,
+      "order": 9,
       "mode": 0,
       "inputs": [],
       "outputs": [],
@@ -650,7 +627,7 @@
         {
           "name": "model",
           "type": "MODEL",
-          "link": 1532
+          "link": 1552
         }
       ],
       "outputs": [
@@ -826,14 +803,14 @@
           "name": "model",
           "type": "MODEL",
           "links": [
-            1530
+            1549
           ]
         },
         {
           "name": "rf_inversion",
           "type": "LATENT",
           "links": [
-            1537
+            1550
           ]
         }
       ],
@@ -853,15 +830,15 @@
       ]
     },
     {
-      "id": 605,
+      "id": 623,
       "type": "UntwistingRoPE",
       "pos": [
-        1130.3924191912731,
-        1145.830275642781
+        1136.956054943152,
+        1171.7011951213472
       ],
       "size": [
-        300.72558066302486,
-        275.79687400716375
+        270,
+        246
       ],
       "flags": {},
       "order": 17,
@@ -870,13 +847,13 @@
         {
           "name": "model",
           "type": "MODEL",
-          "link": 1530
+          "link": 1549
         },
         {
           "name": "rf_inversion",
           "shape": 7,
           "type": "LATENT",
-          "link": 1537
+          "link": 1550
         }
       ],
       "outputs": [
@@ -884,16 +861,15 @@
           "name": "model",
           "type": "MODEL",
           "links": [
-            1531,
-            1532
+            1551,
+            1552
           ]
         }
       ],
       "properties": {
         "cnr_id": "untwistingrope",
-        "ver": "c9136fcced444ea84778a25a37a2b45371ea06a5",
-        "Node name for S&R": "UntwistingRoPE",
-        "aux_id": "BigStationW/ComfyUi-Untwisting-RoPE"
+        "ver": "9fb6a19e82077dc54ddb120f202d474d01497cf7",
+        "Node name for S&R": "UntwistingRoPE"
       },
       "widgets_values": [
         50,
@@ -901,10 +877,33 @@
         0,
         1,
         3,
-        0,
+        0.5,
         "0-999",
         false
       ]
+    },
+    {
+      "id": 611,
+      "type": "Note",
+      "pos": [
+        1135.7803046387965,
+        994.345855096394
+      ],
+      "size": [
+        289.0740052806825,
+        112.57343506692268
+      ],
+      "flags": {},
+      "order": 10,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "properties": {},
+      "widgets_values": [
+        "The only relevant values to change are :\n\n- high_scale_start: (between 1.0 and 1.15) \n- low_scale_end: (between 3.0 and 4.0)"
+      ],
+      "color": "#c09430",
+      "bgcolor": "rgba(24,24,27,.9)"
     }
   ],
   "links": [
@@ -973,30 +972,6 @@
       "MODEL"
     ],
     [
-      1530,
-      603,
-      0,
-      605,
-      0,
-      "MODEL"
-    ],
-    [
-      1531,
-      605,
-      0,
-      559,
-      0,
-      "MODEL"
-    ],
-    [
-      1532,
-      605,
-      0,
-      31,
-      0,
-      "MODEL"
-    ],
-    [
       1534,
       607,
       0,
@@ -1011,14 +986,6 @@
       603,
       2,
       "CONDITIONING"
-    ],
-    [
-      1537,
-      603,
-      1,
-      605,
-      1,
-      "LATENT"
     ],
     [
       1539,
@@ -1099,16 +1066,48 @@
       262,
       0,
       "LATENT"
+    ],
+    [
+      1549,
+      603,
+      0,
+      623,
+      0,
+      "MODEL"
+    ],
+    [
+      1550,
+      603,
+      1,
+      623,
+      1,
+      "LATENT"
+    ],
+    [
+      1551,
+      623,
+      0,
+      559,
+      0,
+      "MODEL"
+    ],
+    [
+      1552,
+      623,
+      0,
+      31,
+      0,
+      "MODEL"
     ]
   ],
   "groups": [],
   "config": {},
   "extra": {
     "ds": {
-      "scale": 0.5559917313492277,
+      "scale": 0.5054470284992979,
       "offset": [
-        -168.79040241213153,
-        -732.904194070317
+        -283.02817232175545,
+        -612.2021925980097
       ]
     },
     "frontendVersion": "1.43.18",
