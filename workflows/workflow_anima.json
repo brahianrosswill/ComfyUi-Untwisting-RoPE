@@ -1,8 +1,8 @@
 {
   "id": "44259803-f9d6-4eb1-a94a-75b8213649d0",
   "revision": 0,
-  "last_node_id": 628,
-  "last_link_id": 1557,
+  "last_node_id": 633,
+  "last_link_id": 1560,
   "nodes": [
     {
       "id": 333,
@@ -16,7 +16,7 @@
         46
       ],
       "flags": {},
-      "order": 14,
+      "order": 15,
       "mode": 0,
       "inputs": [
         {
@@ -47,175 +47,6 @@
       "widgets_values": []
     },
     {
-      "id": 616,
-      "type": "Note",
-      "pos": [
-        1472.1181965831133,
-        1506.4408653175178
-      ],
-      "size": [
-        303.65604311050856,
-        116.00450279158758
-      ],
-      "flags": {},
-      "order": 0,
-      "mode": 0,
-      "inputs": [],
-      "outputs": [],
-      "properties": {},
-      "widgets_values": [
-        "I strongly recommend using only ancestral samplers, adding noise during the process really helps eliminate some transfer style artifacts."
-      ],
-      "color": "#c09430",
-      "bgcolor": "rgba(24,24,27,.9)"
-    },
-    {
-      "id": 229,
-      "type": "KSamplerSelect",
-      "pos": [
-        1465.8802446070147,
-        1668.9757189509317
-      ],
-      "size": [
-        315,
-        58
-      ],
-      "flags": {},
-      "order": 1,
-      "mode": 0,
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "SAMPLER",
-          "type": "SAMPLER",
-          "links": [
-            1545
-          ]
-        }
-      ],
-      "properties": {
-        "cnr_id": "comfy-core",
-        "ver": "0.5.0",
-        "Node name for S&R": "KSamplerSelect"
-      },
-      "widgets_values": [
-        "euler_ancestral"
-      ]
-    },
-    {
-      "id": 167,
-      "type": "RandomNoise",
-      "pos": [
-        1462.0009592796698,
-        1802.4795320303917
-      ],
-      "size": [
-        302.7450866699219,
-        82
-      ],
-      "flags": {},
-      "order": 2,
-      "mode": 0,
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "NOISE",
-          "type": "NOISE",
-          "links": [
-            1543
-          ]
-        }
-      ],
-      "properties": {
-        "cnr_id": "comfy-core",
-        "ver": "0.3.76",
-        "Node name for S&R": "RandomNoise"
-      },
-      "widgets_values": [
-        42,
-        "fixed"
-      ]
-    },
-    {
-      "id": 607,
-      "type": "CLIPTextEncode",
-      "pos": [
-        887.9401977810033,
-        1654.9431345297862
-      ],
-      "size": [
-        400,
-        200
-      ],
-      "flags": {},
-      "order": 12,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "clip",
-          "type": "CLIP",
-          "link": 1552
-        }
-      ],
-      "outputs": [
-        {
-          "name": "CONDITIONING",
-          "type": "CONDITIONING",
-          "links": [
-            1534,
-            1535
-          ]
-        }
-      ],
-      "properties": {
-        "cnr_id": "comfy-core",
-        "ver": "0.21.0",
-        "Node name for S&R": "CLIPTextEncode"
-      },
-      "widgets_values": [
-        "Anime style, a woman with blonde hair plays piano."
-      ]
-    },
-    {
-      "id": 259,
-      "type": "CLIPTextEncode",
-      "pos": [
-        884.8078958977934,
-        1934.8940610315733
-      ],
-      "size": [
-        400,
-        200
-      ],
-      "flags": {},
-      "order": 13,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "clip",
-          "type": "CLIP",
-          "link": 1553
-        }
-      ],
-      "outputs": [
-        {
-          "name": "CONDITIONING",
-          "type": "CONDITIONING",
-          "links": [
-            1400
-          ]
-        }
-      ],
-      "properties": {
-        "cnr_id": "comfy-core",
-        "ver": "0.21.0",
-        "Node name for S&R": "CLIPTextEncode"
-      },
-      "widgets_values": [
-        ""
-      ]
-    },
-    {
       "id": 619,
       "type": "Note",
       "pos": [
@@ -227,7 +58,7 @@
         112.57343506692268
       ],
       "flags": {},
-      "order": 3,
+      "order": 0,
       "mode": 0,
       "inputs": [],
       "outputs": [],
@@ -250,7 +81,7 @@
         116.00450279158758
       ],
       "flags": {},
-      "order": 4,
+      "order": 1,
       "mode": 0,
       "inputs": [],
       "outputs": [],
@@ -273,7 +104,7 @@
         456.72464032296625
       ],
       "flags": {},
-      "order": 20,
+      "order": 21,
       "mode": 0,
       "inputs": [
         {
@@ -335,7 +166,7 @@
         515.9512940840721
       ],
       "flags": {},
-      "order": 22,
+      "order": 23,
       "mode": 0,
       "inputs": [
         {
@@ -364,7 +195,7 @@
         62.2083101328426
       ],
       "flags": {},
-      "order": 21,
+      "order": 22,
       "mode": 0,
       "inputs": [
         {
@@ -395,45 +226,6 @@
       "widgets_values": []
     },
     {
-      "id": 612,
-      "type": "LoadImage",
-      "pos": [
-        -102.84151691065208,
-        1161.3938579968244
-      ],
-      "size": [
-        282.798828125,
-        314.00000000000006
-      ],
-      "flags": {},
-      "order": 5,
-      "mode": 0,
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "IMAGE",
-          "type": "IMAGE",
-          "links": [
-            1539
-          ]
-        },
-        {
-          "name": "MASK",
-          "type": "MASK",
-          "links": null
-        }
-      ],
-      "properties": {
-        "cnr_id": "comfy-core",
-        "ver": "0.21.1",
-        "Node name for S&R": "LoadImage"
-      },
-      "widgets_values": [
-        "example.png",
-        "image"
-      ]
-    },
-    {
       "id": 615,
       "type": "Note",
       "pos": [
@@ -445,7 +237,7 @@
         112.57343506692268
       ],
       "flags": {},
-      "order": 6,
+      "order": 2,
       "mode": 0,
       "inputs": [],
       "outputs": [],
@@ -455,66 +247,6 @@
       ],
       "color": "#c09430",
       "bgcolor": "rgba(24,24,27,.9)"
-    },
-    {
-      "id": 282,
-      "type": "EmptySD3LatentImage",
-      "pos": [
-        1495.1427323629832,
-        2118.3711928088187
-      ],
-      "size": [
-        260,
-        168
-      ],
-      "flags": {},
-      "order": 15,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "width",
-          "type": "INT",
-          "widget": {
-            "name": "width"
-          },
-          "link": 566
-        },
-        {
-          "name": "height",
-          "type": "INT",
-          "widget": {
-            "name": "height"
-          },
-          "link": 567
-        }
-      ],
-      "outputs": [
-        {
-          "name": "LATENT",
-          "type": "LATENT",
-          "slot_index": 0,
-          "links": [
-            1547
-          ]
-        }
-      ],
-      "properties": {
-        "cnr_id": "comfy-core",
-        "ver": "0.3.64",
-        "Node name for S&R": "EmptySD3LatentImage",
-        "enableTabs": false,
-        "tabWidth": 65,
-        "tabXOffset": 10,
-        "hasSecondTab": false,
-        "secondTabText": "Send Back",
-        "secondTabOffset": 80,
-        "secondTabWidth": 65
-      },
-      "widgets_values": [
-        1024,
-        1024,
-        1
-      ]
     },
     {
       "id": 265,
@@ -528,13 +260,13 @@
         220.0000000000001
       ],
       "flags": {},
-      "order": 11,
+      "order": 14,
       "mode": 0,
       "inputs": [
         {
           "name": "image",
           "type": "IMAGE",
-          "link": 1539
+          "link": 1560
         }
       ],
       "outputs": [
@@ -584,7 +316,7 @@
         240.5904011287812
       ],
       "flags": {},
-      "order": 16,
+      "order": 17,
       "mode": 0,
       "inputs": [
         {
@@ -646,7 +378,7 @@
         88.88020833333334
       ],
       "flags": {},
-      "order": 7,
+      "order": 3,
       "mode": 0,
       "inputs": [],
       "outputs": [
@@ -694,7 +426,7 @@
         117.76041666666667
       ],
       "flags": {},
-      "order": 8,
+      "order": 4,
       "mode": 0,
       "inputs": [],
       "outputs": [
@@ -742,7 +474,7 @@
         106
       ],
       "flags": {},
-      "order": 9,
+      "order": 5,
       "mode": 0,
       "inputs": [],
       "outputs": [
@@ -767,18 +499,431 @@
       ]
     },
     {
+      "id": 259,
+      "type": "CLIPTextEncode",
+      "pos": [
+        884.8078958977934,
+        1934.8940610315733
+      ],
+      "size": [
+        400,
+        200
+      ],
+      "flags": {},
+      "order": 13,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 1553
+        }
+      ],
+      "outputs": [
+        {
+          "name": "CONDITIONING",
+          "type": "CONDITIONING",
+          "links": [
+            1400
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.21.0",
+        "Node name for S&R": "CLIPTextEncode"
+      },
+      "widgets_values": [
+        ""
+      ]
+    },
+    {
+      "id": 630,
+      "type": "UntwistingRoPE",
+      "pos": [
+        1734.581064872837,
+        907.5607111277825
+      ],
+      "size": [
+        350.3369627518091,
+        247.19904030321254
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": null
+        },
+        {
+          "name": "rf_inversion",
+          "shape": 7,
+          "type": "LATENT",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "links": null
+        }
+      ],
+      "title": "Untwisting RoPE (Settings for Anima Turbo)",
+      "properties": {
+        "cnr_id": "untwistingrope",
+        "ver": "9fb6a19e82077dc54ddb120f202d474d01497cf7",
+        "Node name for S&R": "UntwistingRoPE"
+      },
+      "widgets_values": [
+        50,
+        1,
+        0,
+        1,
+        1.5,
+        0.5,
+        "0-999",
+        false
+      ]
+    },
+    {
+      "id": 607,
+      "type": "CLIPTextEncode",
+      "pos": [
+        887.9401977810033,
+        1654.9431345297862
+      ],
+      "size": [
+        400,
+        200
+      ],
+      "flags": {},
+      "order": 12,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 1552
+        }
+      ],
+      "outputs": [
+        {
+          "name": "CONDITIONING",
+          "type": "CONDITIONING",
+          "links": [
+            1534,
+            1535
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.21.0",
+        "Node name for S&R": "CLIPTextEncode"
+      },
+      "widgets_values": [
+        "a woman with blonde hair and blue eyes plays piano. "
+      ]
+    },
+    {
+      "id": 628,
+      "type": "UntwistingRoPE",
+      "pos": [
+        1155.6059471633528,
+        1165.8582305707398
+      ],
+      "size": [
+        270,
+        246
+      ],
+      "flags": {},
+      "order": 18,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 1554
+        },
+        {
+          "name": "rf_inversion",
+          "shape": 7,
+          "type": "LATENT",
+          "link": 1555
+        }
+      ],
+      "outputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "links": [
+            1556,
+            1557
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "untwistingrope",
+        "ver": "9fb6a19e82077dc54ddb120f202d474d01497cf7",
+        "Node name for S&R": "UntwistingRoPE"
+      },
+      "widgets_values": [
+        25,
+        0,
+        0.5,
+        0.9,
+        1.5,
+        0.5,
+        "0-999",
+        false
+      ]
+    },
+    {
+      "id": 167,
+      "type": "RandomNoise",
+      "pos": [
+        1453.8112402046313,
+        1759.8929403547274
+      ],
+      "size": [
+        302.7450866699219,
+        82
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "NOISE",
+          "type": "NOISE",
+          "links": [
+            1543
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.76",
+        "Node name for S&R": "RandomNoise"
+      },
+      "widgets_values": [
+        42,
+        "fixed"
+      ]
+    },
+    {
+      "id": 31,
+      "type": "BasicScheduler",
+      "pos": [
+        1452.58439981301,
+        1915.0486390017527
+      ],
+      "size": [
+        270,
+        106
+      ],
+      "flags": {},
+      "order": 20,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 1557
+        }
+      ],
+      "outputs": [
+        {
+          "name": "SIGMAS",
+          "type": "SIGMAS",
+          "links": [
+            1546
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.75",
+        "Node name for S&R": "BasicScheduler"
+      },
+      "widgets_values": [
+        "simple",
+        35,
+        1
+      ]
+    },
+    {
+      "id": 282,
+      "type": "EmptySD3LatentImage",
+      "pos": [
+        1466.2563372831864,
+        2087.849767719435
+      ],
+      "size": [
+        260,
+        168
+      ],
+      "flags": {},
+      "order": 16,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "width",
+          "type": "INT",
+          "widget": {
+            "name": "width"
+          },
+          "link": 566
+        },
+        {
+          "name": "height",
+          "type": "INT",
+          "widget": {
+            "name": "height"
+          },
+          "link": 567
+        }
+      ],
+      "outputs": [
+        {
+          "name": "LATENT",
+          "type": "LATENT",
+          "slot_index": 0,
+          "links": [
+            1547
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.64",
+        "Node name for S&R": "EmptySD3LatentImage",
+        "enableTabs": false,
+        "tabWidth": 65,
+        "tabXOffset": 10,
+        "hasSecondTab": false,
+        "secondTabText": "Send Back",
+        "secondTabOffset": 80,
+        "secondTabWidth": 65
+      },
+      "widgets_values": [
+        1024,
+        1024,
+        1
+      ]
+    },
+    {
+      "id": 611,
+      "type": "Note",
+      "pos": [
+        1148.507205416899,
+        952.5184179243437
+      ],
+      "size": [
+        285.24835336919455,
+        126.58960944919556
+      ],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "properties": {},
+      "widgets_values": [
+        "The only relevant values to change are :\n\n- high_scale: \n- low_scale_end: (between 1.0 and 1.5)"
+      ],
+      "color": "#c09430",
+      "bgcolor": "rgba(24,24,27,.9)"
+    },
+    {
+      "id": 229,
+      "type": "KSamplerSelect",
+      "pos": [
+        1456.4620283066233,
+        1616.1519503142572
+      ],
+      "size": [
+        315,
+        58
+      ],
+      "flags": {},
+      "order": 9,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "SAMPLER",
+          "type": "SAMPLER",
+          "links": [
+            1545
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.5.0",
+        "Node name for S&R": "KSamplerSelect"
+      },
+      "widgets_values": [
+        "euler_ancestral"
+      ]
+    },
+    {
+      "id": 632,
+      "type": "LoadImage",
+      "pos": [
+        -151.78054847035042,
+        1170.4638609274066
+      ],
+      "size": [
+        282.798828125,
+        314.00000000000006
+      ],
+      "flags": {},
+      "order": 10,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            1560
+          ]
+        },
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": null
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.21.1",
+        "Node name for S&R": "LoadImage"
+      },
+      "widgets_values": [
+        "pasted_image_20260523_071531.png",
+        "image"
+      ]
+    },
+    {
       "id": 559,
       "type": "CFGGuider",
       "pos": [
-        1509.2008112031247,
-        1315.8267637570477
+        1488.7568419576453,
+        1274.0013593262165
       ],
       "size": [
         270,
         98
       ],
       "flags": {},
-      "order": 18,
+      "order": 19,
       "mode": 0,
       "inputs": [
         {
@@ -812,122 +957,28 @@
         "Node name for S&R": "CFGGuider"
       },
       "widgets_values": [
-        3
+        3.5
       ]
     },
     {
-      "id": 31,
-      "type": "BasicScheduler",
-      "pos": [
-        1485.7528126778984,
-        1963.3681052602142
-      ],
-      "size": [
-        270,
-        106
-      ],
-      "flags": {},
-      "order": 19,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "model",
-          "type": "MODEL",
-          "link": 1557
-        }
-      ],
-      "outputs": [
-        {
-          "name": "SIGMAS",
-          "type": "SIGMAS",
-          "links": [
-            1546
-          ]
-        }
-      ],
-      "properties": {
-        "cnr_id": "comfy-core",
-        "ver": "0.3.75",
-        "Node name for S&R": "BasicScheduler"
-      },
-      "widgets_values": [
-        "simple",
-        35,
-        1
-      ]
-    },
-    {
-      "id": 628,
-      "type": "UntwistingRoPE",
-      "pos": [
-        1155.6059471633528,
-        1165.8582305707398
-      ],
-      "size": [
-        270,
-        246
-      ],
-      "flags": {},
-      "order": 17,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "model",
-          "type": "MODEL",
-          "link": 1554
-        },
-        {
-          "name": "rf_inversion",
-          "shape": 7,
-          "type": "LATENT",
-          "link": 1555
-        }
-      ],
-      "outputs": [
-        {
-          "name": "model",
-          "type": "MODEL",
-          "links": [
-            1556,
-            1557
-          ]
-        }
-      ],
-      "properties": {
-        "cnr_id": "untwistingrope",
-        "ver": "9fb6a19e82077dc54ddb120f202d474d01497cf7",
-        "Node name for S&R": "UntwistingRoPE"
-      },
-      "widgets_values": [
-        50,
-        1,
-        0,
-        1,
-        1.5,
-        0.5,
-        "0-999",
-        false
-      ]
-    },
-    {
-      "id": 611,
+      "id": 633,
       "type": "Note",
       "pos": [
-        1156.1643191246894,
-        990.1491865908769
+        1461.3244363397027,
+        1438.0275721087457
       ],
       "size": [
-        289.0740052806825,
-        112.57343506692268
+        303.65604311050856,
+        116.00450279158758
       ],
       "flags": {},
-      "order": 10,
+      "order": 11,
       "mode": 0,
       "inputs": [],
       "outputs": [],
       "properties": {},
       "widgets_values": [
-        "The only relevant values to change are :\n\n- high_scale_start: (between 1.0 and 1.15) \n- low_scale_end: (between 1.0 and 1.5)"
+        "I strongly recommend using only ancestral samplers, adding noise during the process really helps eliminate some transfer style artifacts."
       ],
       "color": "#c09430",
       "bgcolor": "rgba(24,24,27,.9)"
@@ -989,14 +1040,6 @@
       603,
       2,
       "CONDITIONING"
-    ],
-    [
-      1539,
-      612,
-      0,
-      265,
-      0,
-      "IMAGE"
     ],
     [
       1540,
@@ -1125,16 +1168,24 @@
       31,
       0,
       "MODEL"
+    ],
+    [
+      1560,
+      632,
+      0,
+      265,
+      0,
+      "IMAGE"
     ]
   ],
   "groups": [],
   "config": {},
   "extra": {
     "ds": {
-      "scale": 0.5559917313492286,
+      "scale": 0.34522712143934,
       "offset": [
-        -491.41396919490944,
-        -604.0997221749435
+        431.070674242856,
+        -540.0052691433687
       ]
     },
     "frontendVersion": "1.43.18",
