@@ -190,6 +190,15 @@ def _coerce_norm_strength(norm_strength: float) -> float:
         strength = 0.0
     return max(0.0, min(1.0, strength))
 
+def _coerce_strength01(value: Any, default: float = 0.0) -> float:
+    try:
+        strength = float(value)
+    except Exception:
+        strength = float(default)
+    if not math.isfinite(strength):
+        strength = float(default)
+    return max(0.0, min(1.0, strength))
+
 def _rf_gamma_for_mode(
     mode: str,
     gamma: float,
@@ -1601,6 +1610,13 @@ def _patch_joint_attention_modules(dm, stats):
                     skip_reshape=True, transformer_options=transformer_options,
                 )
 
+                # Post-Attention AdaIN
+                post_a = _coerce_strength01(cfg.get('post_attention_adain_strength', 0.0))
+                if post_a > 0.0:
+                    # Directly match the target's attention output to the reference's attention output.
+                    out_t_adain = _adain(out_t, out_r, eps=1e-6)
+                    out_t = out_t * (1.0 - post_a) + out_t_adain * post_a
+
                 outs = [out_t, out_r]
                 if bsz > target_bsz * 2:
                     xq_e = xq[target_bsz*2:]
@@ -2108,6 +2124,40 @@ class RFInversion:
 
         return (model_clone, rf_latent)
 
+class UnofficialExtensions:
+    CATEGORY = 'model_patches/Untwisting RoPE'
+    RETURN_TYPES = ('UNTWISTING_ROPE_EXTENSIONS',)
+    RETURN_NAMES = ('unofficial_extensions',)
+    FUNCTION = 'build'
+    DESCRIPTION = (
+        'Optional unofficial toggles for Untwisting RoPE. '
+        'These are intentionally separated from the main paper settings.'
+    )
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            'required': {
+                'adain_on_v': ('BOOLEAN', {
+                    'default': False,
+                    'tooltip': 'Also apply AdaIN to value/V activations. Off keeps Q/K-only AdaIN.',
+                }),
+                'post_attention_adain_strength': ('FLOAT', {
+                    'default': 0.0,
+                    'min': 0.0,
+                    'max': 1.0,
+                    'step': 0.01,
+                    'tooltip': 'Blend strength for matching the target attention output to the reference attention output. 0 disables it.',
+                }),
+            },
+        }
+
+    def build(self, adain_on_v: bool = False, post_attention_adain_strength: float = 0.0):
+        return ({
+            'adain_on_v': vp._coerce_bool(adain_on_v),
+            'post_attention_adain_strength': _coerce_strength01(post_attention_adain_strength),
+        },)
+
 class UntwistingRoPE:
     CATEGORY = 'model_patches/Untwisting RoPE'
     RETURN_TYPES = ('MODEL',)
@@ -2130,14 +2180,11 @@ class UntwistingRoPE:
                 'low_scale_end': ('FLOAT', {'default': 3.0, 'min': -4.0, 'max': 8.0, 'step': 0.01}),
                 'adain_strength': ('FLOAT', {'default': 0.5, 'min': 0.0, 'max': 1.0, 'step': 0.01}),
                 'blocks': ('STRING', {'default': '0-999', 'tooltip': 'Specify block ranges to patch, e.g -> 0-8, 28-37'}),
-                'adain_on_v': ('BOOLEAN', {
-                    'default': True,
-                    'tooltip': 'Also apply AdaIN to value/V activations. Off keeps the previous Q/K-only behavior.',
-                }),
                 'verbose': ('BOOLEAN', {'default': False}),
             },
             'optional': {
                 'rf_inversion': ('LATENT',),
+                'unofficial_extensions': ('UNTWISTING_ROPE_EXTENSIONS',),
             },
         }
 
@@ -2151,9 +2198,9 @@ class UntwistingRoPE:
         low_scale_end: float,
         blocks: str,
         adain_strength: float,
-        adain_on_v: bool = False,
         verbose: bool = False,
         rf_inversion: Optional[Dict[str, Any]] = None,
+        unofficial_extensions: Optional[Dict[str, Any]] = None,
     ):
         rf_active, rf_cfg, rf_state, ref_clean_cpu, ref_conditioning, rf_source = _rf_latent_get_config(rf_inversion)
         node_verbose = vp._coerce_bool(verbose)
@@ -2168,6 +2215,10 @@ class UntwistingRoPE:
         norm_strength = float(rf_cfg.get('norm_strength', 0.0))
         pmi_alpha = float(rf_cfg.get('pmi_alpha', 0.4))
         seed = int(rf_cfg.get('seed', 42))
+
+        ext_cfg = unofficial_extensions if isinstance(unofficial_extensions, dict) else {}
+        adain_on_v = vp._coerce_bool(ext_cfg.get('adain_on_v', False))
+        post_attention_adain_strength = _coerce_strength01(ext_cfg.get('post_attention_adain_strength', 0.0))
 
         if rf_active:
             stats.rf_sigma_cache = rf_state.get('cache', {}) if isinstance(rf_state.get('cache', {}), dict) else {}
@@ -2186,7 +2237,9 @@ class UntwistingRoPE:
         vp._vprint(stats, f'{vp._PREFIX} low_scale:  {low_scale_start:.3f} → {low_scale_end:.3f}')
         vp._vprint(stats,
             f'{vp._PREFIX} blocks: {blocks if blocks.strip() else "all"}  '
-            f'adain={adain_strength:.2f}  adain_on_v={vp._coerce_bool(adain_on_v)}'
+            f'adain={adain_strength:.2f}  '
+            f'unofficial: adain_on_v={adain_on_v}  '
+            f'post_attention_adain_strength={post_attention_adain_strength:.2f}'
         )
         vp._vprint(stats, f'{vp._PREFIX} RF latent connected: {rf_active}  source={rf_source}')
         if rf_active:
@@ -2250,7 +2303,8 @@ class UntwistingRoPE:
                 'active_blocks': parsed_blocks,
                 'apply_adain': True,
                 'adain_strength': float(adain_strength),
-                'adain_on_v': vp._coerce_bool(adain_on_v),
+                'adain_on_v': adain_on_v,
+                'post_attention_adain_strength': post_attention_adain_strength,
                 'cross_batch_target_batch': target_b if rf_active else 0,
                 'progress': progress,
             }
@@ -2500,9 +2554,11 @@ class UntwistingRoPE:
 
 NODE_CLASS_MAPPINGS = {
     'RFInversion': RFInversion,
+    'UnofficialExtensions': UnofficialExtensions,
     'UntwistingRoPE': UntwistingRoPE,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     'RFInversion': 'RF Inversion',
+    'UnofficialExtensions': 'Unofficial Extensions',
     'UntwistingRoPE': 'Untwisting RoPE',
 }
