@@ -1189,13 +1189,15 @@ def _adain(target, style, eps=1e-6):
     s_std  = style.float().var(dim=1, keepdim=True, unbiased=False).add(eps).sqrt().to(target.dtype)
     return (target - t_mean) / t_std * s_std + s_mean
 
-def _cross_batch_adain_qk(xq, xk, cfg, target_bsz, strength, eps=1e-6):
+def _cross_batch_adain_qk(xq, xk, cfg, target_bsz, strength, eps=1e-6, xv=None):
+    return_v = xv is not None
     if target_bsz <= 0 or xq.shape[0] < target_bsz * 2:
-        return xq, xk
+        return (xq, xk, xv) if return_v else (xq, xk)
     a = max(0.0, min(1.0, strength))
     if a <= 0.0:
-        return xq, xk
+        return (xq, xk, xv) if return_v else (xq, xk)
     seqlen = xq.shape[1]
+    apply_v = return_v and vp._coerce_bool(cfg.get('adain_on_v', False))
     for s, e in (cfg.get('target_qk_adain_ranges') or []):
         s, e = max(0, int(s)), min(int(e), seqlen)
         if e <= s:
@@ -1204,7 +1206,11 @@ def _cross_batch_adain_qk(xq, xk, cfg, target_bsz, strength, eps=1e-6):
         q_r, k_r = xq[target_bsz:target_bsz*2, s:e], xk[target_bsz:target_bsz*2, s:e]
         xq[:target_bsz, s:e] = q_t * (1 - a) + _adain(q_t, q_r, eps) * a
         xk[:target_bsz, s:e] = k_t * (1 - a) + _adain(k_t, k_r, eps) * a
-    return xq, xk
+        if apply_v:
+            v_t = xv[:target_bsz, s:e]
+            v_r = xv[target_bsz:target_bsz*2, s:e]
+            xv[:target_bsz, s:e] = v_t * (1 - a) + _adain(v_t, v_r, eps) * a
+    return (xq, xk, xv) if return_v else (xq, xk)
 
 def _repeat_kv_heads_if_needed(k, v, q_heads):
     kv = k.shape[2]
@@ -1526,8 +1532,10 @@ def _patch_joint_attention_modules(dm, stats):
 
                 if cfg.get('apply_adain') and float(cfg.get('adain_strength', 0)) > 0:
                     xq, xk = xq.clone(), xk.clone()
-                    xq, xk = _cross_batch_adain_qk(
-                        xq, xk, cfg, target_bsz, float(cfg['adain_strength'])
+                    if vp._coerce_bool(cfg.get('adain_on_v', False)):
+                        xv = xv.clone()
+                    xq, xk, xv = _cross_batch_adain_qk(
+                        xq, xk, cfg, target_bsz, float(cfg['adain_strength']), xv=xv
                     )
 
                 xq, xk = apply_rope(xq, xk, freqs_cis)
@@ -2122,6 +2130,10 @@ class UntwistingRoPE:
                 'low_scale_end': ('FLOAT', {'default': 3.0, 'min': -4.0, 'max': 8.0, 'step': 0.01}),
                 'adain_strength': ('FLOAT', {'default': 0.5, 'min': 0.0, 'max': 1.0, 'step': 0.01}),
                 'blocks': ('STRING', {'default': '0-999', 'tooltip': 'Specify block ranges to patch, e.g -> 0-8, 28-37'}),
+                'adain_on_v': ('BOOLEAN', {
+                    'default': False,
+                    'tooltip': 'Also apply AdaIN to value/V activations. Off keeps the previous Q/K-only behavior.',
+                }),
                 'verbose': ('BOOLEAN', {'default': False}),
             },
             'optional': {
@@ -2139,6 +2151,7 @@ class UntwistingRoPE:
         low_scale_end: float,
         blocks: str,
         adain_strength: float,
+        adain_on_v: bool = False,
         verbose: bool = False,
         rf_inversion: Optional[Dict[str, Any]] = None,
     ):
@@ -2173,7 +2186,7 @@ class UntwistingRoPE:
         vp._vprint(stats, f'{vp._PREFIX} low_scale:  {low_scale_start:.3f} → {low_scale_end:.3f}')
         vp._vprint(stats,
             f'{vp._PREFIX} blocks: {blocks if blocks.strip() else "all"}  '
-            f'adain={adain_strength:.2f}'
+            f'adain={adain_strength:.2f}  adain_on_v={vp._coerce_bool(adain_on_v)}'
         )
         vp._vprint(stats, f'{vp._PREFIX} RF latent connected: {rf_active}  source={rf_source}')
         if rf_active:
@@ -2237,6 +2250,7 @@ class UntwistingRoPE:
                 'active_blocks': parsed_blocks,
                 'apply_adain': True,
                 'adain_strength': float(adain_strength),
+                'adain_on_v': vp._coerce_bool(adain_on_v),
                 'cross_batch_target_batch': target_b if rf_active else 0,
                 'progress': progress,
             }
