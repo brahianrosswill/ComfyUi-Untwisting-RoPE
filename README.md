@@ -12,6 +12,7 @@ You can see more examples [here](https://github.com/BigStationW/ComfyUi-Untwisti
 ## Supported models
 - Z-image and Z-image turbo
 - Anima
+- The whole flux2 family
 
 ## Installation
 
