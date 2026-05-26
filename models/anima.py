@@ -3,84 +3,49 @@ from __future__ import annotations
 from typing import Any, List
 
 ARCHITECTURE = "anima"
-DISPLAY_NAME = "Anima/MiniTrainDIT"
-CONFIG_KEY = "untwisting_rope_zimage"
+DISPLAY_NAME = "Anima"
 
-# Paths commonly used by ComfyUI model patcher wrappers to reach the diffusion object.
+# ComfyUI BaseModel stores the selected supported-model instance on
+# model.model_config. Anima is declared as comfy.supported_models.Anima.
+COMFY_MODEL_CONFIG_CLASS = "Anima"
 DIFFUSION_ATTR_PATHS = (
-    "diffusion_model",
     "model.diffusion_model",
     "model.model.diffusion_model",
     "inner_model.diffusion_model",
     "model.inner_model.diffusion_model",
+    "diffusion_model",
 )
 
-SEARCH_CHILD_ATTRS = ("model", "inner_model", "diffusion_model", "unet", "wrapped")
+
+def matches_model(model_info: dict[str, Any]) -> bool:
+    """Select Anima only from ComfyUI's explicit MODEL metadata."""
+    return str(model_info.get("model_config_class", "")) == COMFY_MODEL_CONFIG_CLASS
 
 
 def is_model_identity(model_info: dict[str, Any]) -> bool:
-    """Detect Anima from the best-effort identity dictionary built in __init__.py."""
-    return (
-        str(model_info.get("image_model", "")).lower() == "anima"
-        or "anima" in str(model_info.get("diffusion_class", "")).lower()
-        or "anima" in str(model_info.get("diffusion_module", "")).lower()
-    )
-
-
-def looks_like_diffusion_model(obj: Any) -> bool:
-    """Return True for the Anima/Cosmos/MiniTrainDIT diffusion object."""
-    return (
-        obj is not None
-        and hasattr(obj, "blocks")
-        and hasattr(obj, "prepare_embedded_sequence")
-        and hasattr(obj, "unpatchify")
-        and hasattr(obj, "patch_spatial")
-        and hasattr(obj, "patch_temporal")
-    )
-
-
-def _roots(model_patcher: Any) -> list[Any]:
-    roots: list[Any] = []
-    if hasattr(model_patcher, "model"):
-        roots.append(model_patcher.model)
-    roots.append(model_patcher)
-    return roots
+    """Backward-compatible alias for older callers."""
+    return matches_model(model_info)
 
 
 def _get_attr_path(root: Any, attr_path: str) -> tuple[Any, bool]:
     obj = root
     for part in attr_path.split("."):
-        if not hasattr(obj, part):
+        if obj is None or not hasattr(obj, part):
             return None, False
-        obj = getattr(obj, part)
+        try:
+            obj = getattr(obj, part)
+        except Exception:
+            return None, False
     return obj, True
 
 
 def find_diffusion_model(model_patcher: Any) -> Any:
-    """Best-effort lookup for the Anima diffusion model inside ComfyUI wrappers."""
-    roots = _roots(model_patcher)
-    for root in roots:
-        for path in DIFFUSION_ATTR_PATHS:
-            obj, ok = _get_attr_path(root, path)
-            if ok and looks_like_diffusion_model(obj):
-                return obj
-
-    seen: set[int] = set()
-    stack = roots[:]
-    while stack and len(seen) < 256:
-        obj = stack.pop()
-        if id(obj) in seen:
-            continue
-        seen.add(id(obj))
-        if looks_like_diffusion_model(obj):
+    """Return ComfyUI BaseModel.diffusion_model after metadata selected this adapter."""
+    for path in DIFFUSION_ATTR_PATHS:
+        obj, ok = _get_attr_path(model_patcher, path)
+        if ok and obj is not None:
             return obj
-        for name in SEARCH_CHILD_ATTRS:
-            if hasattr(obj, name):
-                try:
-                    stack.append(getattr(obj, name))
-                except Exception:
-                    pass
-    raise RuntimeError("Could not find Anima/MiniTrainDIT diffusion model.")
+    raise RuntimeError("Could not find ComfyUI BaseModel.diffusion_model for Anima.")
 
 
 def is_self_attention_name(name: str, min_layer: int = 0, max_layer: int = 999) -> bool:
@@ -139,8 +104,8 @@ def default_runtime_cfg(dm: Any | None = None) -> dict[str, Any]:
         except Exception:
             cfg["axes_dims"] = []
     # Anima self-attention receives only latent/image tokens as [B, T*H*W, D].
-    # There is no Z-Image-style patchify hook to populate target_real_range, so
-    # the attention patch clamps this intentionally huge range to the sequence length.
+    # There is no patchify hook to populate target_real_range, so the attention
+    # patch clamps this intentionally huge range to the sequence length.
     cfg["target_qk_adain_ranges"] = [(0, 2 ** 31 - 1)]
     return cfg
 
@@ -309,7 +274,7 @@ def prepare_reference_conditioning(
 def patch_attention_modules(dm: Any, stats: Any, helpers: dict[str, Any] | None = None):
     helpers = helpers or {}
     prefix = helpers.get("prefix", "[UntwistingRoPE]")
-    config_key = helpers.get("config_key", CONFIG_KEY)
+    config_key = helpers.get("config_key", "untwisting_rope")
     lerp = helpers["lerp"]
     cross_batch_adain_qk = helpers["cross_batch_adain_qk"]
     build_frequency_scale_vector = helpers["build_frequency_scale_vector"]
