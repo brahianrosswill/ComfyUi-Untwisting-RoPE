@@ -853,6 +853,63 @@
       "bgcolor": "rgba(24,24,27,.9)"
     },
     {
+      "id": 626,
+      "type": "Note",
+      "pos": [
+        767.9979250531322,
+        485.3521046068554
+      ],
+      "size": [
+        285.24835336919455,
+        126.58960944919556
+      ],
+      "flags": {},
+      "order": 11,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "properties": {},
+      "widgets_values": [
+        "Some additional methods not included in the paper, intended to further improve the results. These can be bypassed/removed."
+      ],
+      "color": "#c09430",
+      "bgcolor": "rgba(24,24,27,.9)"
+    },
+    {
+      "id": 625,
+      "type": "UnofficialExtensions",
+      "pos": [
+        751.7264207977231,
+        678.844885774481
+      ],
+      "size": [
+        332.76171875,
+        82
+      ],
+      "flags": {},
+      "order": 12,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "unofficial_extensions",
+          "type": "UNTWISTING_ROPE_EXTENSIONS",
+          "links": [
+            1553
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "untwistingrope",
+        "ver": "ec08050c160633dc890972120598e2912ce26870",
+        "Node name for S&R": "UnofficialExtensions"
+      },
+      "widgets_values": [
+        false,
+        0.5
+      ]
+    },
+    {
       "id": 623,
       "type": "UntwistingRoPE",
       "pos": [
@@ -901,71 +958,14 @@
         "Node name for S&R": "UntwistingRoPE"
       },
       "widgets_values": [
-        50,
-        1.05,
-        0.25,
+        10,
+        1,
+        0,
         1,
         3,
         0.5,
         "0-999",
         true
-      ]
-    },
-    {
-      "id": 626,
-      "type": "Note",
-      "pos": [
-        767.9979250531322,
-        485.3521046068554
-      ],
-      "size": [
-        285.24835336919455,
-        126.58960944919556
-      ],
-      "flags": {},
-      "order": 11,
-      "mode": 0,
-      "inputs": [],
-      "outputs": [],
-      "properties": {},
-      "widgets_values": [
-        "Some additional methods not included in the paper, intended to further improve the results. These can be bypassed/removed."
-      ],
-      "color": "#c09430",
-      "bgcolor": "rgba(24,24,27,.9)"
-    },
-    {
-      "id": 625,
-      "type": "UnofficialExtensions",
-      "pos": [
-        751.7264207977231,
-        678.844885774481
-      ],
-      "size": [
-        332.76171875,
-        82
-      ],
-      "flags": {},
-      "order": 12,
-      "mode": 4,
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "unofficial_extensions",
-          "type": "UNTWISTING_ROPE_EXTENSIONS",
-          "links": [
-            1553
-          ]
-        }
-      ],
-      "properties": {
-        "cnr_id": "untwistingrope",
-        "ver": "ec08050c160633dc890972120598e2912ce26870",
-        "Node name for S&R": "UnofficialExtensions"
-      },
-      "widgets_values": [
-        false,
-        0.5
       ]
     }
   ],
@@ -1175,10 +1175,10 @@
   "config": {},
   "extra": {
     "ds": {
-      "scale": 0.5559917313492279,
+      "scale": 0.8140274938684048,
       "offset": [
-        -110.55711936897131,
-        -350.45796227626744
+        -405.2552693219244,
+        -428.34427505755286
       ]
     },
     "frontendVersion": "1.44.19",
