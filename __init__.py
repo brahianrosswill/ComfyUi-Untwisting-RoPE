@@ -199,6 +199,15 @@ def _coerce_strength01(value: Any, default: float = 0.0) -> float:
         strength = float(default)
     return max(0.0, min(1.0, strength))
 
+def _coerce_axis0_rope_scale(value: Any, default: float = -1.0) -> float:
+    try:
+        v = float(value)
+    except Exception:
+        v = float(default)
+    if not math.isfinite(v):
+        v = float(default)
+    return v
+
 def _rf_gamma_for_mode(
     mode: str,
     gamma: float,
@@ -1156,12 +1165,14 @@ def _build_joint_additive_mask_from_cap_mask(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _build_frequency_scale_vector(
-    head_dim, axes_dims, high_scale, low_scale, beta, device, dtype
+    head_dim, axes_dims, high_scale, low_scale, beta, device, dtype,
+    axis0_rope_scale: float = -1.0,
 ):
     if not axes_dims or sum(int(x) for x in axes_dims) != head_dim:
         axes_dims = [head_dim]
     axes_dims = [int(x) for x in axes_dims]
     is_3axis  = len(axes_dims) == 3
+    axis0_rope_scale = _coerce_axis0_rope_scale(axis0_rope_scale, default=-1.0)
     pieces: List[torch.Tensor] = []
     for axis_idx, axis_dim in enumerate(axes_dims):
         n_pairs = axis_dim // 2
@@ -1169,8 +1180,11 @@ def _build_frequency_scale_vector(
             pieces.append(torch.ones(axis_dim, device=device, dtype=dtype))
             continue
         if is_3axis and axis_idx == 0:
+            # axis0_rope_scale == -1 keeps the original behavior: axis 0 uses low_scale.
+            # Any other finite value forces axis 0 to that constant scale.
+            axis0_value = float(low_scale) if abs(float(axis0_rope_scale) + 1.0) <= 1e-6 else float(axis0_rope_scale)
             pair_scales = torch.full(
-                (n_pairs,), float(low_scale), device=device, dtype=torch.float32
+                (n_pairs,), axis0_value, device=device, dtype=torch.float32
             )
         else:
             d_tilde = (
@@ -1553,6 +1567,7 @@ def _patch_joint_attention_modules(dm, stats):
                     self.head_dim, cfg.get('axes_dims') or [],
                     high_scale, low_scale, beta,
                     xk.device, xk.dtype,
+                    cfg.get('axis0_rope_scale', -1.0),
                 ).view(1, 1, 1, self.head_dim)
 
                 ref_k_pieces, ref_v_pieces = [], []
@@ -2174,13 +2189,26 @@ class UnofficialExtensions:
                     'step': 0.01,
                     'tooltip': 'Blend strength for matching the target attention output to the reference attention output. 0 disables it.',
                 }),
+                'axis0_rope_scale': ('FLOAT', {
+                    'default': -1.0,
+                    'min': -1.0,
+                    'max': 8.0,
+                    'step': 0.01,
+                    'tooltip': 'Axis-0 RoPE scale override. -1 keeps the default behavior.',
+                }),
             },
         }
 
-    def build(self, adain_on_v: bool = False, post_attention_adain_strength: float = 0.0):
+    def build(
+        self,
+        adain_on_v: bool = False,
+        post_attention_adain_strength: float = 0.0,
+        axis0_rope_scale: float = -1.0,
+    ):
         return ({
             'adain_on_v': vp._coerce_bool(adain_on_v),
             'post_attention_adain_strength': _coerce_strength01(post_attention_adain_strength),
+            'axis0_rope_scale': _coerce_axis0_rope_scale(axis0_rope_scale, default=-1.0),
         },)
 
 class UntwistingRoPE:
@@ -2286,6 +2314,7 @@ class UntwistingRoPE:
         ext_cfg = unofficial_extensions if isinstance(unofficial_extensions, dict) else {}
         adain_on_v = vp._coerce_bool(ext_cfg.get('adain_on_v', False))
         post_attention_adain_strength = _coerce_strength01(ext_cfg.get('post_attention_adain_strength', 0.0))
+        axis0_rope_scale = _coerce_axis0_rope_scale(ext_cfg.get('axis0_rope_scale', -1.0), default=-1.0)
 
         if rf_active:
             stats.rf_sigma_cache = rf_state.get('cache', {}) if isinstance(rf_state.get('cache', {}), dict) else {}
@@ -2306,7 +2335,8 @@ class UntwistingRoPE:
             f'{vp._PREFIX} blocks: {blocks if blocks.strip() else "all"}  '
             f'adain={adain_strength:.2f}  '
             f'unofficial: adain_on_v={adain_on_v}  '
-            f'post_attention_adain_strength={post_attention_adain_strength:.2f}'
+            f'post_attention_adain_strength={post_attention_adain_strength:.2f}  '
+            f'axis0_rope_scale={axis0_rope_scale:.3f}'
         )
         vp._vprint(stats, f'{vp._PREFIX} RF latent connected: {rf_active}  source={rf_source}')
         if rf_active:
@@ -2334,7 +2364,26 @@ class UntwistingRoPE:
         try:
             patch_fn = getattr(adapter, 'patch_attention_modules', None)
             if callable(patch_fn):
-                patch_fn(dm, stats, _adapter_helpers())
+                result = patch_fn(dm, stats, _adapter_helpers())
+                
+                # Standardize adapter returns: unpack and log centrally
+                if isinstance(result, tuple):
+                    if len(result) == 4:
+                        matched, installed, restored, patched_names = result
+                    elif len(result) == 3:
+                        matched, installed, restored = result
+                        patched_names = []
+                    else:
+                        matched, installed, restored, patched_names = 0, 0, 0, []
+                        
+                    disp_name = getattr(adapter, 'DISPLAY_NAME', type(adapter).__name__)
+                    
+                    vp._vprint(stats, f'{vp._PREFIX} {disp_name} attention patch: matched={matched} installed={installed} restored={restored}')
+                    for n in patched_names:
+                        vp._vprint(stats, f'{vp._PREFIX}   - {n}')
+                    
+                    if installed == 0:
+                        print(f'{vp._PREFIX} ⚠ WARNING: No {disp_name} attention blocks were patched!')
             else:
                 _patch_context_refiner_mask_modules(dm, stats)
                 _patch_patchify_and_embed(dm, stats)
@@ -2372,6 +2421,7 @@ class UntwistingRoPE:
                 'adain_strength': float(adain_strength),
                 'adain_on_v': adain_on_v,
                 'post_attention_adain_strength': post_attention_adain_strength,
+                'axis0_rope_scale': axis0_rope_scale,
                 'cross_batch_target_batch': target_b if rf_active else 0,
                 'progress': progress,
             }
