@@ -618,6 +618,46 @@ def _untwist_scale_range(values: Any) -> str:
         return '[]'
 
 
+_AXIS0_ROPE_MODES = {'default', 'match_axes', 'constant'}
+
+def _untwist_coerce_axis0_rope_mode(value: Any = None, legacy_scale: Any = None) -> str:
+    """Mirror the main node's axis-0 RoPE mode normalization for debug output."""
+    if value is None:
+        if legacy_scale is not None:
+            try:
+                return 'default' if float(legacy_scale) < 0.0 else 'constant'
+            except Exception:
+                pass
+        return 'default'
+
+    mode = str(value or 'default').strip().lower().replace('-', '_').replace(' ', '_')
+    aliases = {
+        'legacy': 'default',
+        'low': 'default',
+        'low_scale': 'default',
+        'match_axis1': 'match_axes',
+        'match_axis_1': 'match_axes',
+        'match_axis_1_plus': 'match_axes',
+        'match_axes_1plus': 'match_axes',
+        'same_as_axes': 'match_axes',
+        'same_as_axis1': 'match_axes',
+        'override': 'constant',
+        'fixed': 'constant',
+    }
+    mode = aliases.get(mode, mode)
+    return mode if mode in _AXIS0_ROPE_MODES else 'default'
+
+def _untwist_coerce_axis0_rope_scale(value: Any, default: float = 0.0) -> float:
+    """Debug-side formatting clamp: axis0_rope_scale is non-negative now."""
+    try:
+        value_f = float(value)
+    except Exception:
+        value_f = float(default)
+    if not math.isfinite(value_f):
+        value_f = float(default)
+    return max(0.0, value_f)
+
+
 def _untwist_print_rope_scale_debug(
     stats: Optional[_RuntimeStats],
     cfg: Dict[str, Any],
@@ -655,9 +695,20 @@ def _untwist_print_rope_scale_debug(
         sigma = float(cfg.get('sigma', 0.0))
         low_scale = float(cfg.get('_debug_low_scale', 0.0))
         high_scale = float(cfg.get('_debug_high_scale', 0.0))
+        axis0_rope_mode = _untwist_coerce_axis0_rope_mode(
+            cfg.get('axis0_rope_mode', None),
+            legacy_scale=cfg.get('axis0_rope_scale', None),
+        )
+        axis0_rope_scale = _untwist_coerce_axis0_rope_scale(
+            cfg.get('axis0_rope_scale', 0.0), default=0.0
+        )
 
         print(f'{_PREFIX}   progress={progress:.6f}  sigma={sigma:.6f}')
         print(f'{_PREFIX}   low_scale={low_scale:.6f}  high_scale={high_scale:.6f}')
+        print(
+            f'{_PREFIX}   axis0_rope_mode={axis0_rope_mode}  '
+            f'axis0_rope_scale={axis0_rope_scale:.6f}'
+        )
         print(f'{_PREFIX}   axis0={_untwist_scale_range(axis0)}')
         print(f'{_PREFIX}   axis1+={_untwist_scale_range(axis1_plus)}')
     except Exception as exc:
@@ -698,16 +749,29 @@ def _untwist_print_rope_scale_debug_from_cfg(
         cfg['_debug_high_scale'] = float(high_scale)
         cfg['_debug_low_scale'] = float(low_scale)
 
-        scale_vec = build_frequency_scale_vector(
-            head_dim,
-            cfg.get('axes_dims') or [],
-            high_scale,
-            low_scale,
-            beta,
-            device,
-            dtype,
-            cfg.get('axis0_rope_scale', -1.0),
-        )
+        try:
+            scale_vec = build_frequency_scale_vector(
+                head_dim,
+                cfg.get('axes_dims') or [],
+                high_scale,
+                low_scale,
+                beta,
+                device,
+                dtype,
+                runtime_cfg=cfg,
+            )
+        except TypeError:
+            # Compatibility for older main modules without runtime_cfg support.
+            scale_vec = build_frequency_scale_vector(
+                head_dim,
+                cfg.get('axes_dims') or [],
+                high_scale,
+                low_scale,
+                beta,
+                device,
+                dtype,
+                cfg.get('axis0_rope_scale', -1.0),
+            )
         _untwist_print_rope_scale_debug(stats, cfg, module_name, scale_vec)
     except Exception as exc:
         print(f'{_PREFIX} ⚠ RoPE scale debug fallback failed: {exc}')
@@ -764,6 +828,8 @@ __all__ = [
     '_rf_print_prepared',
     '_untwist_format_scale_value',
     '_untwist_scale_range',
+    '_untwist_coerce_axis0_rope_mode',
+    '_untwist_coerce_axis0_rope_scale',
     '_untwist_print_rope_scale_debug',
     '_untwist_print_rope_scale_debug_from_cfg',
     '_untwist_print_patch_complete',

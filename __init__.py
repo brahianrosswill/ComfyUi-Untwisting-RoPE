@@ -199,14 +199,48 @@ def _coerce_strength01(value: Any, default: float = 0.0) -> float:
         strength = float(default)
     return max(0.0, min(1.0, strength))
 
-def _coerce_axis0_rope_scale(value: Any, default: float = -1.0) -> float:
+_AXIS0_ROPE_MODES = {'default', 'match_axes', 'constant'}
+
+def _coerce_axis0_rope_mode(value: Any = None, legacy_scale: Any = None) -> str:
+    """Normalize the axis-0 RoPE behavior selector.
+
+    Backward compatibility:
+    - old missing mode + negative legacy scale => default
+    - old missing mode + non-negative legacy scale => constant
+    """
+    if value is None:
+        if legacy_scale is not None:
+            try:
+                return 'default' if float(legacy_scale) < 0.0 else 'constant'
+            except Exception:
+                pass
+        return 'default'
+
+    mode = str(value or 'default').strip().lower().replace('-', '_').replace(' ', '_')
+    aliases = {
+        'legacy': 'default',
+        'low': 'default',
+        'low_scale': 'default',
+        'match_axis1': 'match_axes',
+        'match_axis_1': 'match_axes',
+        'match_axis_1_plus': 'match_axes',
+        'match_axes_1plus': 'match_axes',
+        'same_as_axes': 'match_axes',
+        'same_as_axis1': 'match_axes',
+        'override': 'constant',
+        'fixed': 'constant',
+    }
+    mode = aliases.get(mode, mode)
+    return mode if mode in _AXIS0_ROPE_MODES else 'default'
+
+def _coerce_axis0_rope_scale(value: Any, default: float = 0.0) -> float:
     try:
         v = float(value)
     except Exception:
         v = float(default)
     if not math.isfinite(v):
         v = float(default)
-    return v
+    return max(0.0, v)
 
 def _rf_gamma_for_mode(
     mode: str,
@@ -1167,15 +1201,35 @@ def _build_joint_additive_mask_from_cap_mask(
 def _build_frequency_scale_vector(
     head_dim, axes_dims, high_scale, low_scale, beta, device, dtype,
     axis0_rope_scale: Any = None,
+    axis0_rope_mode: Any = None,
     runtime_cfg: Optional[Dict[str, Any]] = None,
 ):
     if not axes_dims or sum(int(x) for x in axes_dims) != head_dim:
         axes_dims = [head_dim]
     axes_dims = [int(x) for x in axes_dims]
     is_3axis  = len(axes_dims) == 3
-    if axis0_rope_scale is None and isinstance(runtime_cfg, dict):
-        axis0_rope_scale = runtime_cfg.get('axis0_rope_scale', -1.0)
-    axis0_rope_scale = _coerce_axis0_rope_scale(axis0_rope_scale, default=-1.0)
+
+    legacy_axis0_scale = None
+    if isinstance(runtime_cfg, dict):
+        legacy_axis0_scale = runtime_cfg.get('axis0_rope_scale', None)
+        if axis0_rope_mode is None:
+            axis0_rope_mode = runtime_cfg.get('axis0_rope_mode', None)
+        if axis0_rope_scale is None:
+            axis0_rope_scale = legacy_axis0_scale
+
+    axis0_rope_mode = _coerce_axis0_rope_mode(
+        axis0_rope_mode, legacy_scale=legacy_axis0_scale
+    )
+    axis0_rope_scale = _coerce_axis0_rope_scale(axis0_rope_scale, default=0.0)
+
+    def _curve_scales(n_pairs: int) -> torch.Tensor:
+        d_tilde = (
+            torch.zeros(1, device=device, dtype=torch.float32)
+            if n_pairs == 1
+            else torch.linspace(0.0, 1.0, n_pairs, device=device, dtype=torch.float32)
+        )
+        return high_scale + (low_scale - high_scale) * d_tilde.pow(float(beta))
+
     pieces: List[torch.Tensor] = []
     for axis_idx, axis_dim in enumerate(axes_dims):
         n_pairs = axis_dim // 2
@@ -1183,19 +1237,21 @@ def _build_frequency_scale_vector(
             pieces.append(torch.ones(axis_dim, device=device, dtype=dtype))
             continue
         if is_3axis and axis_idx == 0:
-            # axis0_rope_scale == -1 keeps the original behavior: axis 0 uses low_scale.
-            # Any other finite value forces axis 0 to that constant scale.
-            axis0_value = float(low_scale) if float(axis0_rope_scale) < 0.0 else float(axis0_rope_scale)
-            pair_scales = torch.full(
-                (n_pairs,), axis0_value, device=device, dtype=torch.float32
-            )
+            if axis0_rope_mode == 'match_axes':
+                # Axis 0 uses the same per-pair curve as axes 1+.
+                pair_scales = _curve_scales(n_pairs)
+            elif axis0_rope_mode == 'constant':
+                # Axis 0 uses the explicit non-negative override.
+                pair_scales = torch.full(
+                    (n_pairs,), float(axis0_rope_scale), device=device, dtype=torch.float32
+                )
+            else:
+                # Default/legacy behavior: axis 0 is flat at low_scale.
+                pair_scales = torch.full(
+                    (n_pairs,), float(low_scale), device=device, dtype=torch.float32
+                )
         else:
-            d_tilde = (
-                torch.zeros(1, device=device, dtype=torch.float32)
-                if n_pairs == 1
-                else torch.linspace(0.0, 1.0, n_pairs, device=device, dtype=torch.float32)
-            )
-            pair_scales = high_scale + (low_scale - high_scale) * d_tilde.pow(float(beta))
+            pair_scales = _curve_scales(n_pairs)
         pieces.append(pair_scales.to(dtype=dtype).repeat_interleave(2))
         if axis_dim % 2:
             pieces.append(torch.ones(1, device=device, dtype=dtype))
@@ -2204,12 +2260,20 @@ class UnofficialExtensions:
                     'step': 0.01,
                     'tooltip': 'Blend strength for matching the target attention output to the reference attention output. 0 disables it.',
                 }),
+                'axis0_rope_mode': (['default', 'match_axes', 'constant'], {
+                    'default': 'default',
+                    'tooltip': (
+                        'Axis-0 RoPE behavior. default keeps the legacy flat low-scale axis 0; '
+                        'match_axes makes axis 0 use the same curve as axes 1+; '
+                        'constant uses axis0_rope_scale.'
+                    ),
+                }),
                 'axis0_rope_scale': ('FLOAT', {
-                    'default': -1.0,
-                    'min': -1.0,
+                    'default': 0.0,
+                    'min': 0.0,
                     'max': 8.0,
                     'step': 0.01,
-                    'tooltip': 'Axis-0 RoPE scale override. -1 keeps the default behavior.',
+                    'tooltip': 'Non-negative Axis-0 RoPE scale used only when axis0_rope_mode is constant.',
                 }),
             },
         }
@@ -2218,12 +2282,14 @@ class UnofficialExtensions:
         self,
         adain_on_v: bool = False,
         post_attention_adain_strength: float = 0.0,
-        axis0_rope_scale: float = -1.0,
+        axis0_rope_mode: str = 'default',
+        axis0_rope_scale: float = 0.0,
     ):
         return ({
             'adain_on_v': vp._coerce_bool(adain_on_v),
             'post_attention_adain_strength': _coerce_strength01(post_attention_adain_strength),
-            'axis0_rope_scale': _coerce_axis0_rope_scale(axis0_rope_scale, default=-1.0),
+            'axis0_rope_mode': _coerce_axis0_rope_mode(axis0_rope_mode),
+            'axis0_rope_scale': _coerce_axis0_rope_scale(axis0_rope_scale, default=0.0),
         },)
 
 class UntwistingRoPE:
@@ -2329,7 +2395,11 @@ class UntwistingRoPE:
         ext_cfg = unofficial_extensions if isinstance(unofficial_extensions, dict) else {}
         adain_on_v = vp._coerce_bool(ext_cfg.get('adain_on_v', False))
         post_attention_adain_strength = _coerce_strength01(ext_cfg.get('post_attention_adain_strength', 0.0))
-        axis0_rope_scale = _coerce_axis0_rope_scale(ext_cfg.get('axis0_rope_scale', -1.0), default=-1.0)
+        axis0_rope_mode = _coerce_axis0_rope_mode(
+            ext_cfg.get('axis0_rope_mode', None),
+            legacy_scale=ext_cfg.get('axis0_rope_scale', None),
+        )
+        axis0_rope_scale = _coerce_axis0_rope_scale(ext_cfg.get('axis0_rope_scale', 0.0), default=0.0)
 
         if rf_active:
             stats.rf_sigma_cache = rf_state.get('cache', {}) if isinstance(rf_state.get('cache', {}), dict) else {}
@@ -2351,6 +2421,7 @@ class UntwistingRoPE:
             f'adain={adain_strength:.2f}  '
             f'unofficial: adain_on_v={adain_on_v}  '
             f'post_attention_adain_strength={post_attention_adain_strength:.2f}  '
+            f'axis0_rope_mode={axis0_rope_mode}  '
             f'axis0_rope_scale={axis0_rope_scale:.3f}'
         )
         vp._vprint(stats, f'{vp._PREFIX} RF latent connected: {rf_active}  source={rf_source}')
@@ -2436,6 +2507,7 @@ class UntwistingRoPE:
                 'adain_strength': float(adain_strength),
                 'adain_on_v': adain_on_v,
                 'post_attention_adain_strength': post_attention_adain_strength,
+                'axis0_rope_mode': axis0_rope_mode,
                 'axis0_rope_scale': axis0_rope_scale,
                 'cross_batch_target_batch': target_b if rf_active else 0,
                 'progress': progress,
