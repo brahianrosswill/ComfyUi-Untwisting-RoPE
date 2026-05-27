@@ -63,13 +63,10 @@ def is_self_attention_name(name: str, min_layer: int = 0, max_layer: int = 999) 
 
 
 def block_index_from_name(name: str) -> int:
-    try:
-        parts = str(name).split(".")
-        if len(parts) >= 2 and parts[0] == "blocks":
-            return int(parts[1])
-    except Exception:
-        pass
-    return -1
+    parts = str(name).split(".")
+    if len(parts) >= 2 and parts[0] == "blocks":
+        return int(parts[1])
+    raise ValueError(f"Invalid Anima block name {name!r}; expected blocks.<index>.*")
 
 
 def is_attention_module(module: Any) -> bool:
@@ -83,26 +80,50 @@ def is_attention_module(module: Any) -> bool:
 
 def axes_dims_from_head_dim(head_dim: int) -> List[int]:
     """ComfyUI Cosmos VideoRopePosition3DEmb uses [temporal, height, width] chunks."""
-    hd = max(0, int(head_dim))
+    hd = int(head_dim)
+    if hd <= 0:
+        raise RuntimeError(f"Anima axes-dims lookup failed: invalid head_dim={head_dim!r}.")
     dim_h = (hd // 6) * 2
     dim_w = dim_h
     dim_t = hd - 2 * dim_h
     axes = [dim_t, dim_h, dim_w]
     if sum(axes) != hd or any(v <= 0 for v in axes):
-        return [hd]
+        raise RuntimeError(f"Anima axes-dims lookup failed: could not split head_dim={hd} into positive [T,H,W] axes.")
     return axes
 
 
 def default_runtime_cfg(dm: Any | None = None) -> dict[str, Any]:
     """Architecture-specific cfg fields merged into the main runtime cfg."""
+    if dm is None:
+        raise RuntimeError("Anima default_runtime_cfg failed: diffusion model is None; cannot read head_dim.")
+
+    try:
+        blocks = getattr(dm, "blocks")
+    except Exception as exc:
+        raise RuntimeError("Anima default_runtime_cfg failed: diffusion model has no blocks attribute; cannot read head_dim.") from exc
+
+    try:
+        first_block = blocks[0]
+    except Exception as exc:
+        raise RuntimeError("Anima default_runtime_cfg failed: diffusion model blocks[0] is unavailable; cannot read head_dim.") from exc
+
+    try:
+        self_attn = getattr(first_block, "self_attn")
+    except Exception as exc:
+        raise RuntimeError("Anima default_runtime_cfg failed: blocks[0] has no self_attn; cannot read head_dim.") from exc
+
+    try:
+        head_dim = int(getattr(self_attn, "head_dim"))
+    except Exception as exc:
+        raise RuntimeError("Anima default_runtime_cfg failed: blocks[0].self_attn.head_dim is missing or not an integer.") from exc
+
+    if head_dim <= 0:
+        raise RuntimeError(f"Anima default_runtime_cfg failed: invalid blocks[0].self_attn.head_dim={head_dim!r}.")
+
     cfg: dict[str, Any] = {"architecture": ARCHITECTURE}
-    if dm is not None:
-        try:
-            cfg["axes_dims"] = axes_dims_from_head_dim(
-                int(getattr(getattr(dm, "blocks")[0].self_attn, "head_dim"))
-            )
-        except Exception:
-            cfg["axes_dims"] = []
+    cfg["head_dim"] = head_dim
+    cfg["axes_dims"] = axes_dims_from_head_dim(head_dim)
+
     # Anima self-attention receives only latent/image tokens as [B, T*H*W, D].
     # There is no patchify hook to populate target_real_range, so the attention
     # patch clamps this intentionally huge range to the sequence length.
@@ -176,35 +197,29 @@ def _extract_reference_conditioning(ref_conditioning: Any) -> Tuple[Optional[tor
 def _tensor_batch_ids_like(value: Any, device) -> Optional[torch.Tensor]:
     if value is None:
         return None
-    try:
-        if torch.is_tensor(value):
-            ids = value.detach().to(device=device)
-        else:
-            ids = torch.as_tensor(value, device=device)
-        if ids.ndim == 1:
-            ids = ids.unsqueeze(0)
-        elif ids.ndim > 2:
-            ids = ids.reshape(ids.shape[0], -1)
-        return ids.long()
-    except Exception:
-        return None
+    if torch.is_tensor(value):
+        ids = value.detach().to(device=device)
+    else:
+        ids = torch.as_tensor(value, device=device)
+    if ids.ndim == 1:
+        ids = ids.unsqueeze(0)
+    elif ids.ndim > 2:
+        ids = ids.reshape(ids.shape[0], -1)
+    return ids.long()
 
 
 def _tensor_t5_weights_like(value: Any, like: torch.Tensor) -> Optional[torch.Tensor]:
     if value is None:
         return None
-    try:
-        if torch.is_tensor(value):
-            w = value.detach().to(device=like.device, dtype=like.dtype)
-        else:
-            w = torch.as_tensor(value, device=like.device, dtype=like.dtype)
-        if w.ndim == 1:
-            w = w.unsqueeze(0).unsqueeze(-1)
-        elif w.ndim == 2:
-            w = w.unsqueeze(-1)
-        return w
-    except Exception:
-        return None
+    if torch.is_tensor(value):
+        w = value.detach().to(device=like.device, dtype=like.dtype)
+    else:
+        w = torch.as_tensor(value, device=like.device, dtype=like.dtype)
+    if w.ndim == 1:
+        w = w.unsqueeze(0).unsqueeze(-1)
+    elif w.ndim == 2:
+        w = w.unsqueeze(-1)
+    return w
 
 
 def prepare_reference_conditioning(
@@ -218,13 +233,13 @@ def prepare_reference_conditioning(
 ) -> Tuple[Any, str]:
     prefix = (helpers or {}).get("prefix", "[UntwistingRoPE]")
     if ref_conditioning is None:
-        return ref_conditioning, "none"
+        raise RuntimeError("Anima reference conditioning preprocessing was requested, but ref_conditioning is None.")
     if dm is None or not hasattr(dm, "preprocess_text_embeds"):
-        return ref_conditioning, "not-applicable"
+        raise RuntimeError("Anima reference conditioning preprocessing requires dm.preprocess_text_embeds, but it is missing.")
 
     ref_cond, ref_meta = _extract_reference_conditioning(ref_conditioning)
     if ref_cond is None:
-        return ref_conditioning, "no-reference-tensor"
+        raise RuntimeError("Anima reference conditioning preprocessing could not find a tensor in ref_conditioning.")
 
     try:
         ref_shape_before = tuple(ref_cond.shape)
@@ -238,18 +253,15 @@ def prepare_reference_conditioning(
 
         t5xxl_ids = ref_meta.get("t5xxl_ids", None)
         if t5xxl_ids is None:
-            msg = f"raw-reference-no-t5xxl_ids-shape={ref_shape_before}"
-            print(
-                f"{prefix} ⚠ reference conditioning is not 512 tokens and has no t5xxl_ids; "
-                f"cannot run preprocess_text_embeds safely. shape={ref_shape_before}"
+            raise RuntimeError(
+                f"Anima reference conditioning is not 512 tokens and has no t5xxl_ids; "
+                f"cannot run preprocess_text_embeds. shape={ref_shape_before}"
             )
-            return ref_conditioning, msg
 
         ref_cond_b = ref_cond_b.to(device=device, dtype=dtype)
         ids = _tensor_batch_ids_like(t5xxl_ids, device=device)
         if ids is None:
-            print(f"{prefix} ⚠ reference conditioning has t5xxl_ids, but they could not be converted to a tensor.")
-            return ref_conditioning, f"t5xxl_ids-invalid-shape={ref_shape_before}"
+            raise RuntimeError(f"Anima reference conditioning has t5xxl_ids, but conversion returned None. shape={ref_shape_before}")
 
         weights = _tensor_t5_weights_like(ref_meta.get("t5xxl_weights", None), ref_cond_b)
 
@@ -265,10 +277,7 @@ def prepare_reference_conditioning(
         status = f"preprocessed-ref-conditioning {ref_shape_before}->{tuple(processed.shape)}"
         return out, status
     except Exception as exc:
-        print(f"{prefix} ⚠ reference conditioning preprocess failed; using original conditioning: {exc}")
-        if stats is not None and (_coerce_bool(getattr(stats, "verbose", False)) or _coerce_bool(getattr(stats, "rf_verbose", False))):
-            traceback.print_exc()
-        return ref_conditioning, f"preprocess-failed:{exc}"
+        raise RuntimeError(f"Anima reference conditioning preprocess failed; strict mode refuses to reuse original conditioning after preprocessing failure: {exc}") from exc
 
 
 def patch_attention_modules(dm: Any, stats: Any, helpers: dict[str, Any] | None = None):
@@ -309,8 +318,10 @@ def patch_attention_modules(dm: Any, stats: Any, helpers: dict[str, Any] | None 
                 )
                 if not cfg or not cfg.get("enabled"):
                     return orig(x, context, rope_emb=rope_emb, transformer_options=transformer_options)
-                if context is not None or not bool(getattr(self, "is_selfattn", False)):
-                    return orig(x, context, rope_emb=rope_emb, transformer_options=transformer_options)
+                if context is not None:
+                    raise RuntimeError(f"Anima Untwisting enabled in {module_name}, but received cross-attention context; expected self-attention only.")
+                if not bool(getattr(self, "is_selfattn", False)):
+                    raise RuntimeError(f"Anima Untwisting enabled in {module_name}, but module is_selfattn is false.")
 
                 block_idx = int(module_block_idx)
                 active_blocks = cfg.get("active_blocks", None)
@@ -318,12 +329,14 @@ def patch_attention_modules(dm: Any, stats: Any, helpers: dict[str, Any] | None 
                     return orig(x, context, rope_emb=rope_emb, transformer_options=transformer_options)
 
                 target_bsz = int(cfg.get("cross_batch_target_batch", 0))
-                if target_bsz <= 0 or not torch.is_tensor(x) or x.ndim != 3:
-                    return orig(x, context, rope_emb=rope_emb, transformer_options=transformer_options)
+                if target_bsz <= 0:
+                    raise RuntimeError(f"Anima Untwisting enabled in {module_name}, but cross_batch_target_batch={target_bsz}.")
+                if not torch.is_tensor(x) or x.ndim != 3:
+                    raise RuntimeError(f"Anima Untwisting expected x as [B,S,C] tensor in {module_name}; got {type(x).__name__} with ndim={getattr(x, 'ndim', None)}.")
 
                 bsz, seqlen, _ = x.shape
                 if bsz < target_bsz * 2:
-                    return orig(x, context, rope_emb=rope_emb, transformer_options=transformer_options)
+                    raise RuntimeError(f"Anima Untwisting expected at least target+reference batches in {module_name}; bsz={bsz}, target_bsz={target_bsz}.")
 
                 try:
                     if hasattr(stats, "adapter_attn_calls"):
@@ -339,13 +352,39 @@ def patch_attention_modules(dm: Any, stats: Any, helpers: dict[str, Any] | None 
                         q, k = q.clone(), k.clone()
                         q, k = cross_batch_adain_qk(q, k, cfg, target_bsz, float(cfg["adain_strength"]))
 
-                    axes_dims = cfg.get("axes_dims") or axes_dims_from_head_dim(int(self.head_dim))
+                    try:
+                        head_dim = int(self.head_dim)
+                    except Exception as exc:
+                        raise RuntimeError(f"Anima Untwisting failed in {module_name}: self.head_dim is missing or not an integer.") from exc
+                    if head_dim <= 0:
+                        raise RuntimeError(f"Anima Untwisting failed in {module_name}: invalid self.head_dim={head_dim!r}.")
+
+                    if "head_dim" not in cfg:
+                        raise RuntimeError(f"Anima Untwisting failed in {module_name}: runtime cfg is missing required head_dim.")
+                    try:
+                        cfg_head_dim = int(cfg["head_dim"])
+                    except Exception as exc:
+                        raise RuntimeError(f"Anima Untwisting failed in {module_name}: runtime cfg head_dim is not an integer: {cfg.get('head_dim')!r}.") from exc
+                    if cfg_head_dim <= 0:
+                        raise RuntimeError(f"Anima Untwisting failed in {module_name}: runtime cfg has invalid head_dim={cfg_head_dim!r}.")
+                    if cfg_head_dim != head_dim:
+                        raise RuntimeError(f"Anima Untwisting failed in {module_name}: cfg head_dim={cfg_head_dim} does not match self.head_dim={head_dim}.")
+
+                    if "axes_dims" not in cfg:
+                        raise RuntimeError(f"Anima Untwisting failed in {module_name}: runtime cfg is missing required axes_dims.")
+                    try:
+                        axes_dims = [int(v) for v in cfg["axes_dims"]]
+                    except Exception as exc:
+                        raise RuntimeError(f"Anima Untwisting failed in {module_name}: runtime cfg axes_dims is invalid: {cfg.get('axes_dims')!r}.") from exc
+                    if sum(axes_dims) != head_dim or any(v <= 0 for v in axes_dims):
+                        raise RuntimeError(f"Anima Untwisting failed in {module_name}: axes_dims={axes_dims!r} does not split head_dim={head_dim}.")
+
                     scale_vec = build_frequency_scale_vector(
-                        int(self.head_dim), axes_dims,
+                        head_dim, axes_dims,
                         high_scale, low_scale, beta,
                         k.device, k.dtype,
                         runtime_cfg=cfg,
-                    ).view(1, 1, 1, int(self.head_dim))
+                    ).view(1, 1, 1, head_dim)
 
                     q_t = q[:target_bsz]
                     k_t = torch.cat([k[:target_bsz], k[target_bsz:target_bsz * 2] * scale_vec], dim=1)
@@ -371,16 +410,15 @@ def patch_attention_modules(dm: Any, stats: Any, helpers: dict[str, Any] | None 
                 except Exception as exc:
                     if hasattr(stats, "adapter_attn_failures"):
                         stats.adapter_attn_failures += 1
-                    print(f"{prefix} ⚠ adapter self-attn patch failed in {module_name}: {exc}")
-                    if _coerce_bool(getattr(stats, "verbose", False)) or _coerce_bool(getattr(stats, "rf_verbose", False)):
-                        traceback.print_exc()
-                    return orig(x, context, rope_emb=rope_emb, transformer_options=transformer_options)
+                    raise RuntimeError(f"Anima adapter self-attn patch failed in {module_name}; strict mode refuses to call the original forward after patch failure: {exc}") from exc
             return patched_forward
 
         module.forward = types.MethodType(make_forward(original_forward, name, block_idx_for_module), module)
         setattr(module, "_untwist_adapter_active", True)
         installed += 1
 
+    if installed <= 0:
+        raise RuntimeError("Anima adapter patch failed: no compatible self-attention modules were installed.")
     return matched, installed, restored, patched_names
 
 
