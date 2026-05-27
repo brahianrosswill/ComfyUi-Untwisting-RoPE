@@ -84,25 +84,34 @@ def _adain(target: torch.Tensor, style: torch.Tensor, eps: float = 1e-6) -> torc
 def _coerce_strength01(value: Any, default: float = 0.0) -> float:
     try:
         strength = float(value)
-    except Exception:
-        strength = float(default)
+    except Exception as exc:
+        raise ValueError(f"Invalid strength value {value!r}; expected a finite float in [0, 1].") from exc
     if not torch.isfinite(torch.tensor(strength)):
-        strength = float(default)
-    return max(0.0, min(1.0, strength))
+        raise ValueError(f"Invalid strength value {value!r}; expected a finite float in [0, 1].")
+    if not 0.0 <= strength <= 1.0:
+        raise ValueError(f"Invalid strength value {strength!r}; expected value in [0, 1].")
+    return strength
 
 def _lerp(a: float, b: float, t: float) -> float:
     return float(a + (b - a) * t)
 
 def patch_attention_modules(dm: Any, stats: Any, helpers: dict[str, Any] | None = None):
     helpers = helpers or {}
-    
-    # Apply context refiner and patchify patches so cfg['ref_real_ranges'] populates correctly.
-    if callable(helpers.get("patch_context_refiner_mask_modules")):
-        helpers["patch_context_refiner_mask_modules"](dm, stats)
-    if callable(helpers.get("patch_patchify_and_embed")):
-        helpers["patch_patchify_and_embed"](dm, stats)
 
-    build_frequency_scale_vector = helpers.get("build_frequency_scale_vector")
+    required_helpers = (
+        "patch_context_refiner_mask_modules",
+        "patch_patchify_and_embed",
+        "build_frequency_scale_vector",
+    )
+    missing = [name for name in required_helpers if not callable(helpers.get(name))]
+    if missing:
+        raise RuntimeError(f"Z-Image adapter missing required helper(s): {missing}")
+
+    # Apply context refiner and patchify patches so cfg['ref_real_ranges'] populates correctly.
+    helpers["patch_context_refiner_mask_modules"](dm, stats)
+    helpers["patch_patchify_and_embed"](dm, stats)
+
+    build_frequency_scale_vector = helpers["build_frequency_scale_vector"]
     
     matched = installed = restored = 0
     patched_names = []
@@ -132,11 +141,14 @@ def patch_attention_modules(dm: Any, stats: Any, helpers: dict[str, Any] | None 
 
                 target_bsz = int(cfg.get("cross_batch_target_batch", 0))
                 if target_bsz <= 0:
-                    return orig(x, x_mask, freqs_cis, transformer_options=transformer_options)
+                    raise RuntimeError(f"Z-Image Untwisting enabled in {module_name}, but cross_batch_target_batch={target_bsz}.")
+
+                if not torch.is_tensor(x) or x.ndim != 3:
+                    raise RuntimeError(f"Z-Image Untwisting expected x as [B,S,C] tensor in {module_name}; got {type(x).__name__} with ndim={getattr(x, 'ndim', None)}.")
 
                 bsz, seqlen, _ = x.shape
                 if bsz < target_bsz * 2:
-                    return orig(x, x_mask, freqs_cis, transformer_options=transformer_options)
+                    raise RuntimeError(f"Z-Image Untwisting expected at least target+reference batches in {module_name}; bsz={bsz}, target_bsz={target_bsz}.")
 
                 block_idx = int(transformer_options.get("block_index", -1))
                 active_blocks = cfg.get("active_blocks", set())
@@ -149,16 +161,15 @@ def patch_attention_modules(dm: Any, stats: Any, helpers: dict[str, Any] | None 
                     img_s, img_e = 0, seqlen
                 else:
                     ref_ranges = cfg.get("ref_real_ranges", [])
-                    if ref_ranges:
-                        img_s, img_e = ref_ranges[0]
-                    else:
-                        img_s, img_e = 0, seqlen
+                    if not ref_ranges:
+                        raise RuntimeError(f"Z-Image Untwisting enabled in {module_name}, but cfg['ref_real_ranges'] is missing. patchify_and_embed did not populate the image token range.")
+                    img_s, img_e = ref_ranges[0]
                         
                 img_s = max(0, min(img_s, seqlen))
                 img_e = max(img_s, min(img_e, seqlen))
 
                 if img_e <= img_s:
-                    return orig(x, x_mask, freqs_cis, transformer_options=transformer_options)
+                    raise RuntimeError(f"Z-Image Untwisting has an empty image token range in {module_name}: {(img_s, img_e)} for seqlen={seqlen}.")
 
                 if hasattr(stats, "attn_calls"):
                     stats.attn_calls += 1
@@ -217,9 +228,15 @@ def patch_attention_modules(dm: Any, stats: Any, helpers: dict[str, Any] | None 
 
                 n_rep = self.n_local_heads // self.n_local_kv_heads
                 def expand_kv(k_tensor, v_tensor):
-                    if n_rep >= 1:
-                        k_tensor = k_tensor.unsqueeze(3).repeat(1, 1, 1, n_rep, 1).flatten(2, 3)
-                        v_tensor = v_tensor.unsqueeze(3).repeat(1, 1, 1, n_rep, 1).flatten(2, 3)
+                    if self.n_local_kv_heads <= 0:
+                        raise RuntimeError(f"Z-Image Untwisting invalid KV head count in {module_name}: n_local_kv_heads={self.n_local_kv_heads}.")
+                    if self.n_local_heads % self.n_local_kv_heads != 0:
+                        raise RuntimeError(f"Z-Image Untwisting cannot expand KV heads in {module_name}: q_heads={self.n_local_heads}, kv_heads={self.n_local_kv_heads}.")
+                    n_rep_local = self.n_local_heads // self.n_local_kv_heads
+                    if n_rep_local < 1:
+                        raise RuntimeError(f"Z-Image Untwisting invalid KV repeat factor in {module_name}: n_rep={n_rep_local}.")
+                    k_tensor = k_tensor.unsqueeze(3).repeat(1, 1, 1, n_rep_local, 1).flatten(2, 3)
+                    v_tensor = v_tensor.unsqueeze(3).repeat(1, 1, 1, n_rep_local, 1).flatten(2, 3)
                     return k_tensor, v_tensor
 
                 # TARGET STREAM
@@ -232,9 +249,10 @@ def patch_attention_modules(dm: Any, stats: Any, helpers: dict[str, Any] | None 
                 mask_t = x_mask[:target_bsz] if x_mask is not None else None
                 if mask_t is not None:
                     ref_len = img_e - img_s
-                    if mask_t.ndim >= 2:
-                        pad = torch.zeros((*mask_t.shape[:-1], ref_len), device=mask_t.device, dtype=mask_t.dtype)
-                        mask_t = torch.cat([mask_t, pad], dim=-1)
+                    if mask_t.ndim < 2:
+                        raise RuntimeError(f"Z-Image Untwisting cannot append reference mask in {module_name}: mask ndim={mask_t.ndim}, expected >=2.")
+                    pad = torch.zeros((*mask_t.shape[:-1], ref_len), device=mask_t.device, dtype=mask_t.dtype)
+                    mask_t = torch.cat([mask_t, pad], dim=-1)
 
                 out_t = optimized_attention_masked(
                     xq_t.movedim(1, 2), k_t_full.movedim(1, 2), v_t_full.movedim(1, 2),
@@ -278,6 +296,8 @@ def patch_attention_modules(dm: Any, stats: Any, helpers: dict[str, Any] | None 
         module.forward = types.MethodType(make_forward(original_forward, name), module)
         installed += 1
 
+    if installed <= 0:
+        raise RuntimeError("Z-Image adapter patch failed: no compatible attention modules were installed.")
     return matched, installed, restored, patched_names
 
 def uses_reference_branch_kv() -> bool:
