@@ -1,87 +1,55 @@
-"""Template for a metadata-only UntwistingRoPE model adapter.
+"""
+Untwisting RoPE - New Model Adapter Template
+============================================
 
-Copy this file to ``models/<your_model>.py`` and rename the constants below.
-Keep this file private as ``_template.py``: the adapter registry ignores modules
-whose filename starts with ``_``.
+To add a new model:
+1. Copy this file and rename it (e.g., `my_model.py`).
+2. Update the ARCHITECTURE, DISPLAY_NAME, and SUPPORTED_MODEL_CONFIG_CLASSES.
+3. Implement the QKV extraction and concatenation logic inside `patch_attention_modules`.
+4. Import your new file in `__init__.py` and add it to `model_adapters`.
 
-Design rule
------------
-Adapter selection must use ComfyUI's explicit MODEL metadata only.
-
-Do:
-    - Match ``model_info["model_config_class"]`` against ComfyUI
-      ``supported_models`` class names.
-    - Group variants in one adapter when ComfyUI maps them to the same
-      architecture/config class family.
-    - Use ``unet_config`` values only after matching, for runtime behavior.
-
-Do not:
-    - Guess the architecture from diffusion-model attributes.
-    - Guess from attention-module names.
-    - Guess from tensor shapes, layer counts, or method presence.
-    - Fall back to structural probing when metadata does not match.
-
-Why
----
-ComfyUI already resolves the checkpoint to a concrete ``supported_models`` class.
-Its loaded ``BaseModel`` stores that object on ``model.model_config`` and the
-diffusion module on ``model.diffusion_model``. This adapter should trust that
-metadata instead of re-detecting the architecture.
+RULES:
+- NEVER put `print()` statements in this file. Return `patched_names` and let `__init__.py` print them.
+- Always return `(matched, installed, restored, patched_names)` from `patch_attention_modules`.
+- Pay close attention to sequence slicing (e.g., separating text from image tokens) before applying AdaIN or RoPE.
 """
 
 from __future__ import annotations
 
-from typing import Any, Iterable
+import types
+import torch
+from typing import Any, Dict, List, Optional, Tuple
+
+# Optional: Import specific ComfyUI attention math if your model needs it
+# from comfy.ldm.modules.attention import optimized_attention_masked
+# from comfy.ldm.flux.math import apply_rope
 
 
-# ---------------------------------------------------------------------------
-# Required adapter identity
-# ---------------------------------------------------------------------------
+# ═════════════════════════════════════════════════════════════════════════════
+# 1. METADATA & IDENTITY
+# ═════════════════════════════════════════════════════════════════════════════
 
-# Internal architecture key written into transformer_options config.
-# Use a stable lowercase identifier, usually the filename without ".py".
-ARCHITECTURE = "replace_me"
+ARCHITECTURE = "my_model"
+DISPLAY_NAME = "My New Model"
+CONFIG_KEY = "untwisting_rope"
 
-# User-facing label for logs / diagnostics.
-DISPLAY_NAME = "Replace Me"
+# Which ComfyUI BaseModel classes this adapter applies to
+SUPPORTED_MODEL_CONFIG_CLASSES = {"MyModelConfigName"}
 
-# The exact ComfyUI supported_models class names this adapter supports.
-#
-# Examples:
-#   Flux dev + Flux schnell:
-#       SUPPORTED_MODEL_CONFIG_CLASSES = {"Flux", "FluxSchnell"}
-#
-#   Flux2 dev + Flux2 Klein, if ComfyUI maps both to class Flux2:
-#       SUPPORTED_MODEL_CONFIG_CLASSES = {"Flux2"}
-#
-#   Z-Image latent-space only:
-#       SUPPORTED_MODEL_CONFIG_CLASSES = {"ZImage"}
-#
-# Do not put broad config keys here, such as image_model="lumina2", because
-# multiple ComfyUI classes may share those fields while needing different hooks.
-SUPPORTED_MODEL_CONFIG_CLASSES: set[str] = {
-    "ReplaceWithComfySupportedModelClass",
-}
-
-
-# ---------------------------------------------------------------------------
-# Small metadata helpers
-# ---------------------------------------------------------------------------
-
-_DIFFUSION_ATTR_PATHS = (
-    # Common ComfyUI ModelPatcher -> BaseModel locations.
+# Standard paths to find the actual diffusion UNet/Transformer inside ComfyUI's wrapper
+DIFFUSION_ATTR_PATHS = (
     "model.diffusion_model",
     "model.model.diffusion_model",
     "inner_model.diffusion_model",
     "model.inner_model.diffusion_model",
-
-    # Useful in tests, or if the caller passes the BaseModel directly.
     "diffusion_model",
 )
 
+def matches_model(model_info: Dict[str, Any]) -> bool:
+    """Tells __init__.py if this adapter should be used for the current model."""
+    return str(model_info.get("model_config_class", "")) in SUPPORTED_MODEL_CONFIG_CLASSES
 
-def _get_attr_path(root: Any, attr_path: str) -> tuple[Any, bool]:
-    """Safely read a dotted attribute path."""
+def _get_attr_path(root: Any, attr_path: str) -> Tuple[Any, bool]:
     obj = root
     for part in attr_path.split("."):
         if obj is None or not hasattr(obj, part):
@@ -92,208 +60,210 @@ def _get_attr_path(root: Any, attr_path: str) -> tuple[Any, bool]:
             return None, False
     return obj, True
 
-
-def _class_name(value: Any) -> str:
-    return type(value).__name__ if value is not None else ""
-
-
-def _as_set(values: Iterable[str]) -> set[str]:
-    return {str(v) for v in values if str(v)}
-
-
-# ---------------------------------------------------------------------------
-# Required hooks
-# ---------------------------------------------------------------------------
-
-def matches_model(model_info: dict[str, Any]) -> bool:
-    """Return True only for explicit ComfyUI model_config class matches.
-
-    ``model_info`` is produced by the adapter registry from ComfyUI's loaded
-    MODEL object. The important key is:
-
-        model_info["model_config_class"]
-
-    which should be the class name from ``comfy.supported_models`` such as
-    "Flux", "FluxSchnell", "Flux2", "ZImage", or "Anima".
-
-    Keep this strict. If it returns False, the adapter should not be used.
-    """
-    return str(model_info.get("model_config_class", "")) in SUPPORTED_MODEL_CONFIG_CLASSES
-
-
 def find_diffusion_model(model_patcher: Any) -> Any:
-    """Return ComfyUI's already-selected ``BaseModel.diffusion_model``.
-
-    This function is intentionally only a lookup. It must not verify the model
-    by checking attributes like ``layers``, ``blocks``, ``patchify_and_embed``,
-    q/k/v projections, tensor shapes, or module names.
-
-    Adapter selection already happened through ``matches_model()``.
-    """
-    for path in _DIFFUSION_ATTR_PATHS:
+    """Locates the raw PyTorch diffusion module inside the ComfyUI model object."""
+    for path in DIFFUSION_ATTR_PATHS:
         obj, ok = _get_attr_path(model_patcher, path)
         if ok and obj is not None:
             return obj
-
-    raise RuntimeError(
-        f"Could not find ComfyUI BaseModel.diffusion_model for {DISPLAY_NAME}."
-    )
+    raise RuntimeError(f"Could not find ComfyUI BaseModel.diffusion_model for {DISPLAY_NAME}.")
 
 
-# ---------------------------------------------------------------------------
-# Optional runtime config hook
-# ---------------------------------------------------------------------------
+# ═════════════════════════════════════════════════════════════════════════════
+# 2. RUNTIME CONFIGURATION
+# ═════════════════════════════════════════════════════════════════════════════
 
-def default_runtime_cfg(dm: Any | None = None) -> dict[str, Any]:
-    """Return architecture-specific config merged into transformer_options.
-
-    Use this for values your attention patches need at runtime.
-
-    Good:
-        - Static architecture labels.
-        - RoPE axis dimensions if they are known for this architecture.
-        - Ranges or feature flags required by your own patch code.
-
-    Avoid:
-        - New architecture detection.
-        - Structural checks that decide whether this adapter should be active.
+def default_runtime_cfg(dm: Any | None = None) -> Dict[str, Any]:
     """
-    return {
-        "architecture": ARCHITECTURE,
-    }
-
-
-# ---------------------------------------------------------------------------
-# Optional reference-conditioning hook
-# ---------------------------------------------------------------------------
+    Returns architecture-specific defaults injected into the configuration dictionary.
+    Useful if you need to extract fixed dimensions (like head_dim or axes_dims) 
+    from the diffusion model `dm` before the patch runs.
+    """
+    cfg: Dict[str, Any] = {"architecture": ARCHITECTURE}
+    
+    # Example: If your model has a fixed head_dim or 3D RoPE axes, define them here:
+    # cfg["head_dim"] = 128
+    # cfg["axes_dims"] = [16, 56, 56]
+    
+    return cfg
 
 def prepare_reference_conditioning(
-    ref_conditioning: Any,
-    dm: Any,
-    device: Any,
-    dtype: Any,
-    stats: Any = None,
-    label: str = "",
-    helpers: dict[str, Any] | None = None,
-) -> tuple[Any, str]:
-    """Optionally adapt reference CONDITIONING before RF/reference use.
-
-    Return:
-        (possibly_modified_conditioning, status_string)
-
-    Implement this only when the model requires architecture-specific text
-    preprocessing. For example, an adapter may need to run a ComfyUI diffusion
-    method that converts raw text embeddings into the final cross-attention
-    shape.
-
-    Keep it deterministic and safe:
-        - Do not mutate the input in place unless that is intentional.
-        - Use ``torch.inference_mode()`` inside expensive model calls.
-        - Return the original conditioning with a clear status string when the
-          required metadata is absent.
+    ref_conditioning: Any, 
+    dm: Any, 
+    device: Any, 
+    dtype: Any, 
+    stats: Any, 
+    label: str = "", 
+    helpers: Dict[str, Any] | None = None
+) -> Tuple[Any, str]:
+    """
+    Pre-processes the reference conditioning tensor if necessary (e.g., T5 tokenization).
+    For most standard architectures, this is a no-op.
     """
     return ref_conditioning, "not-applicable"
 
-
-# ---------------------------------------------------------------------------
-# Optional attention-name helpers
-# ---------------------------------------------------------------------------
-
-def is_attention_name(name: str, min_layer: int = 0, max_layer: int = 999) -> bool:
-    """Return True for attention module names this adapter should patch.
-
-    Replace this with the naming pattern used by the ComfyUI diffusion module
-    after metadata has selected this adapter.
-
-    Example patterns:
-        - "layers.N.attention"
-        - "blocks.N.self_attn"
-        - "double_blocks.N.img_attn"
-
-    This is not architecture detection; it is patch targeting after the adapter
-    has already been selected.
-    """
-    parts = str(name).split(".")
-    if len(parts) != 3:
-        return False
-
-    # Example placeholder: layers.N.attention
-    if parts[0] != "layers" or parts[2] != "attention":
-        return False
-
-    try:
-        idx = int(parts[1])
-    except Exception:
-        return False
-
-    return int(min_layer) <= idx <= int(max_layer)
-
-
-def is_joint_attention(module: Any) -> bool:
-    """Optional module predicate for patch code.
-
-    Use this only after metadata-selected adapter activation, never for adapter
-    selection. Keep the check as narrow as the patch implementation needs.
-    """
-    return False
-
-
 def uses_reference_branch_kv() -> bool:
-    """Whether this architecture expects separate reference-branch K/V handling."""
+    """
+    Returns True if the architecture natively passes the reference image as K/V 
+    (like some IP-Adapters). Standard DiTs usually return False.
+    """
     return False
 
 
-# ---------------------------------------------------------------------------
-# Optional attention patch hook
-# ---------------------------------------------------------------------------
+# ═════════════════════════════════════════════════════════════════════════════
+# 3. CORE ATTENTION PATCH
+# ═════════════════════════════════════════════════════════════════════════════
 
-def patch_attention_modules(
-    dm: Any,
-    stats: Any,
-    helpers: dict[str, Any] | None = None,
-) -> Any:
-    """Patch the model-specific attention modules.
+# Generic AdaIN helper (leave this alone)
+def _adain(target: torch.Tensor, style: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+    t_mean = target.mean(dim=1, keepdim=True)
+    s_mean = style.mean(dim=1, keepdim=True)
+    t_std = target.float().var(dim=1, keepdim=True, unbiased=False).add(eps).sqrt().to(target.dtype)
+    s_std = style.float().var(dim=1, keepdim=True, unbiased=False).add(eps).sqrt().to(target.dtype)
+    return (target - t_mean) / t_std * s_std + s_mean
 
-    ``helpers`` is provided by the top-level node and may contain reusable patch
-    functions. Prefer helpers over duplicating large generic patch logic.
+def _coerce_strength01(value: Any, default: float = 0.0) -> float:
+    try:
+        strength = float(value)
+    except Exception:
+        strength = float(default)
+    if not torch.isfinite(torch.tensor(strength)):
+        strength = float(default)
+    return max(0.0, min(1.0, strength))
 
-    Common patterns:
-        if callable(helpers.get("patch_joint_attention_modules")):
-            return helpers["patch_joint_attention_modules"](dm, stats)
-
-        if callable(helpers.get("patch_patchify_and_embed")):
-            helpers["patch_patchify_and_embed"](dm, stats)
-
-    Keep all architecture-specific module names and monkey patches in this file.
-    The top-level node should stay model-neutral.
+def patch_attention_modules(dm: Any, stats: Any, helpers: Dict[str, Any] | None = None) -> Tuple[int, int, int, List[str]]:
+    """
+    The main hook. Iterates through the model, finds the attention blocks, and overwrites `forward`.
+    
+    Returns exactly 4 items: (matched, installed, restored, patched_names)
+    Do NOT print here. Let __init__.py handle logging.
     """
     helpers = helpers or {}
+    
+    # Import math helpers dynamically provided by __init__.py
+    lerp = helpers.get("lerp")
+    cross_batch_adain_qk = helpers.get("cross_batch_adain_qk")
+    build_frequency_scale_vector = helpers.get("build_frequency_scale_vector")
+    
+    matched = installed = restored = 0
+    patched_names: List[str] = []
 
-    # Replace with this adapter's actual patch sequence.
-    #
-    # Example:
-    # if callable(helpers.get("patch_joint_attention_modules")):
-    #     return helpers["patch_joint_attention_modules"](dm, stats)
+    # 1. Iterate through the model to find target attention layers
+    for name, module in dm.named_modules():
+        
+        # TODO: Define your criteria for what counts as an attention layer.
+        # e.g., if "attn" not in name: continue
+        if not hasattr(module, "qkv") or not hasattr(module, "forward"):
+            continue
 
-    return None
+        matched += 1
+        patched_names.append(name)
 
+        # 2. Store the original forward pass safely
+        if hasattr(module, "_untwist_orig_forward"):
+            module.forward = module._untwist_orig_forward
+            restored += 1
+        else:
+            module._untwist_orig_forward = module.forward
+            
+        original_forward = module._untwist_orig_forward
 
-# ---------------------------------------------------------------------------
-# Optional diagnostic helper
-# ---------------------------------------------------------------------------
+        # 3. Create the patched forward pass
+        def make_forward(orig_fn, module_name):
+            def patched_forward(self, *args, **kwargs):
+                
+                # A. Extract options and check if the effect is enabled
+                transformer_options = kwargs.get("transformer_options", {})
+                cfg = transformer_options.get(CONFIG_KEY, {})
+                if not cfg or not cfg.get("enabled"):
+                    return orig_fn(self, *args, **kwargs)
 
-def describe_match(model_info: dict[str, Any]) -> str:
-    """Return a concise diagnostic string for logs or error messages."""
-    model_config_class = str(model_info.get("model_config_class", ""))
-    unet_config = model_info.get("unet_config", {})
-    image_model = ""
-    if isinstance(unet_config, dict):
-        image_model = str(unet_config.get("image_model", ""))
-    else:
-        image_model = str(model_info.get("image_model", ""))
+                target_bsz = int(cfg.get("cross_batch_target_batch", 0))
+                if target_bsz <= 0:
+                    return orig_fn(self, *args, **kwargs)
 
-    supported = ", ".join(sorted(SUPPORTED_MODEL_CONFIG_CLASSES))
-    return (
-        f"{DISPLAY_NAME}: model_config_class={model_config_class!r}, "
-        f"image_model={image_model!r}, supported_classes={{{supported}}}"
-    )
+                # B. Extract x (Assuming x is the first argument, adjust based on model architecture)
+                x = args[0] 
+                bsz, seqlen, _ = x.shape
+                if bsz < target_bsz * 2:
+                    return orig_fn(self, *args, **kwargs)
+
+                # C. Check block active range
+                block_idx = int(transformer_options.get("block_index", -1))
+                active_blocks = cfg.get("active_blocks", set())
+                if active_blocks and block_idx not in active_blocks:
+                    return orig_fn(self, *args, **kwargs)
+
+                # D. SEQUENCE SLICING (Crucial!)
+                # If text and image tokens are concatenated, find where the image starts/ends.
+                # Do NOT apply AdaIN or RoPE scaling to text tokens!
+                ref_ranges = cfg.get("ref_real_ranges", [])
+                if ref_ranges:
+                    img_s, img_e = ref_ranges[0]
+                else:
+                    img_s, img_e = 0, seqlen  # Fallback to whole sequence
+                    
+                img_s = max(0, min(img_s, seqlen))
+                img_e = max(img_s, min(img_e, seqlen))
+
+                if img_e <= img_s:
+                    return orig_fn(self, *args, **kwargs)
+
+                if hasattr(stats, "attn_calls"):
+                    stats.attn_calls += 1
+
+                # ---------------------------------------------------------------------
+                # E. CUSTOM QKV LOGIC (Model Specific)
+                # ---------------------------------------------------------------------
+                # TODO: Implement how YOUR model extracts Q, K, and V. 
+                # Example:
+                # xq, xk, xv = torch.split(self.qkv(x), [dim_q, dim_k, dim_v], dim=-1)
+                # xq = self.q_norm(xq) ... etc.
+                
+                # --- PSEUDOCODE FOR UNTWISTING ---
+                # 1. Pre-RoPE AdaIN (Only on img_s:img_e tokens)
+                # a = float(cfg.get("adain_strength", 0.0))
+                # if a > 0:
+                #     apply AdaIN from K_reference to K_target...
+                
+                # 2. Apply RoPE (Model specific implementation)
+                # xq, xk = apply_rope(xq, xk, freqs_cis)
+                
+                # 3. Calculate Frequency Scales
+                # progress = float(cfg.get("progress", 0.0))
+                # high_scale = lerp(cfg["high_scale_start"], cfg["high_scale_end"], progress)
+                # low_scale  = lerp(cfg["low_scale_start"],  cfg["low_scale_end"],  progress)
+                # scale_vec = build_frequency_scale_vector(...)
+                
+                # 4. Scale Reference K and Concatenate to Target
+                # ref_k = xk[target_bsz:target_bsz*2, img_s:img_e] * scale_vec
+                # ref_v = xv[target_bsz:target_bsz*2, img_s:img_e]
+                # k_t_full = torch.cat([xk[:target_bsz], ref_k], dim=1)  # (dim depends on layout)
+                # v_t_full = torch.cat([xv[:target_bsz], ref_v], dim=1)
+                
+                # 5. Calculate Attention
+                # out_t = optimized_attention_masked(xq_t, k_t_full, v_t_full...)
+                # out_r = optimized_attention_masked(xq_r, xk_r, xv_r...)
+                # (Also handle uncond batch if present: xq_e, xk_e, xv_e)
+                
+                # 6. Post Attention AdaIN (Optional)
+                # post_a = _coerce_strength01(cfg.get("post_attention_adain_strength", 0.0))
+                # if post_a > 0:
+                #     out_t_adain = _adain(out_t, out_r)
+                #     out_t = ... blend ...
+                
+                # 7. Recombine and return
+                # final_out = torch.cat([out_t, out_r, out_e], dim=0)
+                # return self.out(final_out)
+                
+                # (Remove this fallback once implemented)
+                return orig_fn(self, *args, **kwargs)
+
+            return patched_forward
+
+        # Attach the patch to the module
+        module.forward = types.MethodType(make_forward(original_forward, name), module)
+        installed += 1
+
+    # Return exactly 4 items so __init__.py can print the results centrally.
+    return matched, installed, restored, patched_names
