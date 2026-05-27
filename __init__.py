@@ -1166,12 +1166,15 @@ def _build_joint_additive_mask_from_cap_mask(
 
 def _build_frequency_scale_vector(
     head_dim, axes_dims, high_scale, low_scale, beta, device, dtype,
-    axis0_rope_scale: float = -1.0,
+    axis0_rope_scale: Any = None,
+    runtime_cfg: Optional[Dict[str, Any]] = None,
 ):
     if not axes_dims or sum(int(x) for x in axes_dims) != head_dim:
         axes_dims = [head_dim]
     axes_dims = [int(x) for x in axes_dims]
     is_3axis  = len(axes_dims) == 3
+    if axis0_rope_scale is None and isinstance(runtime_cfg, dict):
+        axis0_rope_scale = runtime_cfg.get('axis0_rope_scale', -1.0)
     axis0_rope_scale = _coerce_axis0_rope_scale(axis0_rope_scale, default=-1.0)
     pieces: List[torch.Tensor] = []
     for axis_idx, axis_dim in enumerate(axes_dims):
@@ -1569,7 +1572,7 @@ def _patch_joint_attention_modules(dm, stats):
                     self.head_dim, cfg.get('axes_dims') or [],
                     high_scale, low_scale, beta,
                     xk.device, xk.dtype,
-                    cfg.get('axis0_rope_scale', -1.0),
+                    runtime_cfg=cfg,
                 ).view(1, 1, 1, self.head_dim)
 
                 vp._untwist_print_rope_scale_debug(stats, cfg, module_name, scale_vec)
