@@ -344,6 +344,7 @@ def patch_attention_modules(dm: Any, stats: Any, helpers: dict[str, Any] | None 
                         int(self.head_dim), axes_dims,
                         high_scale, low_scale, beta,
                         k.device, k.dtype,
+                        runtime_cfg=cfg,
                     ).view(1, 1, 1, int(self.head_dim))
 
                     q_t = q[:target_bsz]
