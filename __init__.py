@@ -1182,7 +1182,7 @@ def _build_frequency_scale_vector(
         if is_3axis and axis_idx == 0:
             # axis0_rope_scale == -1 keeps the original behavior: axis 0 uses low_scale.
             # Any other finite value forces axis 0 to that constant scale.
-            axis0_value = float(low_scale) if abs(float(axis0_rope_scale) + 1.0) <= 1e-6 else float(axis0_rope_scale)
+            axis0_value = float(low_scale) if float(axis0_rope_scale) < 0.0 else float(axis0_rope_scale)
             pair_scales = torch.full(
                 (n_pairs,), axis0_value, device=device, dtype=torch.float32
             )
