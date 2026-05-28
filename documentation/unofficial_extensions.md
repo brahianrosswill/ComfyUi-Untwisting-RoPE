@@ -27,3 +27,9 @@ You have three choices:
 - `default` -> As the paper intended
 - `match_axes` -> axis0 ends up behaving exactly like the other axes (best results).
 - `constant` -> You set up your own `axis0_rope_scale` value 
+
+## `v_injection_strength`
+
+Controls how much the target `V` tensor is directly blended toward the reference `V` tensor, forcing stronger texture/color/style transfer.
+
+Gives pretty good results at low strength (~0.2).
