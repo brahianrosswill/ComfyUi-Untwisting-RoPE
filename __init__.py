@@ -1203,7 +1203,6 @@ def _build_frequency_scale_vector(
                 # Axis 0 uses the same per-pair curve as axes 1+.
                 pair_scales = _curve_scales(n_pairs)
             elif axis0_rope_mode == 'constant':
-                # Axis 0 uses the explicit non-negative override.
                 pair_scales = torch.full(
                     (n_pairs,), float(axis0_rope_scale), device=device, dtype=torch.float32
                 )
@@ -1314,9 +1313,7 @@ def _apply_qkv_shared_effects(
     Shared core Q/K/V effect stack for adapter-owned attention patches.
 
     Adapters expose where Q/K/V exist, their layout, and the applicable token
-    range. This function owns shared user-facing features such as
-    ``v_injection_strength`` so new shared parameters do not need to be copied
-    into every adapter.
+    range. This function owns shared user-facing Q/K/V features.
 
     Supported layouts:
       - BSHD: [batch, sequence, heads, head_dim]
@@ -1342,14 +1339,34 @@ def _apply_qkv_shared_effects(
             f'unsupported layout={layout!r}.'
         )
 
-    if v_bshd.ndim != 4:
+    if q_bshd.ndim != 4 or k_bshd.ndim != 4 or v_bshd.ndim != 4:
         raise RuntimeError(
             f'{vp._PREFIX} shared QKV effects failed in {module_name}: '
-            f'expected V as rank-4 after layout normalization, got shape={tuple(v_bshd.shape)}.'
+            f'expected Q/K/V as rank-4 after layout normalization, got '
+            f'q={tuple(q_bshd.shape)}, k={tuple(k_bshd.shape)}, v={tuple(v_bshd.shape)}.'
         )
 
     seqlen = int(v_bshd.shape[1])
     ranges = _shared_effect_ranges(cfg, seqlen, token_ranges)
+
+    # Shared pre-RoPE Q/K AdaIN.
+    adain_strength = _coerce_strength01(cfg.get('adain_strength', 0.0)) if cfg.get('apply_adain') else 0.0
+    if adain_strength > 0.0:
+        cfg_for_adain = dict(cfg)
+        cfg_for_adain['target_qk_adain_ranges'] = list(ranges)
+        q_bshd = q_bshd.clone()
+        k_bshd = k_bshd.clone()
+        v_for_adain = v_bshd.clone() if vp._coerce_bool(cfg.get('adain_on_v', False)) else None
+        out = _cross_batch_adain_qk(
+            q_bshd, k_bshd, cfg_for_adain, int(target_bsz), float(adain_strength), xv=v_for_adain
+        )
+        if v_for_adain is not None:
+            q_bshd, k_bshd, v_bshd = out
+        else:
+            q_bshd, k_bshd = out
+        cfg['_debug_qk_adain_strength'] = float(adain_strength)
+        cfg['_debug_qk_adain_module'] = str(module_name)
+        cfg['_debug_qk_adain_ranges'] = list(ranges)
 
     # Shared V injection: interpolate target V toward paired reference V.
     # This intentionally lives in the core, not in individual adapters.
@@ -1371,6 +1388,72 @@ def _apply_qkv_shared_effects(
         cfg['_debug_v_injection_ranges'] = list(ranges)
 
     return restore(q_bshd, k_bshd, v_bshd)
+
+
+def _apply_attention_output_shared_effects(
+    out_t: torch.Tensor,
+    out_r: torch.Tensor,
+    cfg: Dict[str, Any],
+    target_bsz: int,
+    module_name: str,
+    *,
+    layout: str = 'BSD',
+    token_ranges: Any = None,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Shared post-attention output effect stack for adapter-owned attention patches.
+
+    Adapters expose the target/reference attention outputs, layout, and optional
+    architecture-specific token ranges.
+
+    Supported layouts:
+      - BSD/BSC: [batch, sequence, channels]
+    """
+    if not isinstance(cfg, dict) or not cfg.get('enabled', False):
+        return out_t, out_r
+    if not (torch.is_tensor(out_t) and torch.is_tensor(out_r)):
+        return out_t, out_r
+    if int(target_bsz) <= 0:
+        return out_t, out_r
+
+    layout_u = str(layout or 'BSD').upper()
+    if layout_u not in ('BSD', 'BSC'):
+        raise RuntimeError(
+            f'{vp._PREFIX} shared attention-output effects failed in {module_name}: '
+            f'unsupported layout={layout!r}.'
+        )
+    if out_t.ndim != 3 or out_r.ndim != 3:
+        raise RuntimeError(
+            f'{vp._PREFIX} shared attention-output effects failed in {module_name}: '
+            f'expected target/ref outputs as rank-3, got target={tuple(out_t.shape)} ref={tuple(out_r.shape)}.'
+        )
+    if out_t.shape[0] != out_r.shape[0] or out_t.shape[2:] != out_r.shape[2:]:
+        raise RuntimeError(
+            f'{vp._PREFIX} shared attention-output effects failed in {module_name}: '
+            f'target/ref output shape mismatch: target={tuple(out_t.shape)} ref={tuple(out_r.shape)}.'
+        )
+
+    seqlen = int(out_t.shape[1])
+    ranges = _shared_effect_ranges(cfg, seqlen, token_ranges)
+
+    post_a = _coerce_strength01(cfg.get('post_attention_adain_strength', 0.0))
+    if post_a > 0.0:
+        out_t = out_t.clone()
+        for s, e in ranges:
+            t_slice = out_t[:, s:e]
+            r_slice = out_r[:, s:e]
+            if t_slice.shape != r_slice.shape:
+                raise RuntimeError(
+                    f'{vp._PREFIX} shared post-attention AdaIN failed in {module_name}: '
+                    f'target/ref range shape mismatch: target={tuple(t_slice.shape)} ref={tuple(r_slice.shape)}.'
+                )
+            out_t[:, s:e] = t_slice * (1.0 - post_a) + _adain(t_slice, r_slice, eps=1e-6) * post_a
+
+        cfg['_debug_post_attention_adain_strength'] = float(post_a)
+        cfg['_debug_post_attention_adain_module'] = str(module_name)
+        cfg['_debug_post_attention_adain_ranges'] = list(ranges)
+
+    return out_t, out_r
 
 def _repeat_kv_heads_if_needed(k, v, q_heads):
     kv = k.shape[2]
@@ -1695,13 +1778,14 @@ def _patch_joint_attention_modules(dm, stats):
                 cfg['_debug_high_scale'] = float(high_scale)
                 cfg['_debug_low_scale'] = float(low_scale)
 
-                if cfg.get('apply_adain') and float(cfg.get('adain_strength', 0)) > 0:
-                    xq, xk = xq.clone(), xk.clone()
-                    if vp._coerce_bool(cfg.get('adain_on_v', False)):
-                        xv = xv.clone()
-                    xq, xk, xv = _cross_batch_adain_qk(
-                        xq, xk, cfg, target_bsz, float(cfg['adain_strength']), xv=xv
-                    )
+                xq, xk, xv = _apply_qkv_shared_effects(
+                    xq, xk, xv,
+                    cfg,
+                    target_bsz,
+                    module_name,
+                    layout='BSHD',
+                    token_ranges=cfg.get('target_qk_adain_ranges', None),
+                )
 
                 xq, xk = apply_rope(xq, xk, freqs_cis)
 
@@ -1726,23 +1810,6 @@ def _patch_joint_attention_modules(dm, stats):
                     raise RuntimeError(
                         f'Untwisting attention failed in {module_name}: no reference K/V token ranges were available.'
                     )
-
-                # Value tensor injection / interpolation: push the target content/texture
-                # stream toward the paired reference stream before reference K/V concat.
-                v_inj = _coerce_strength01(cfg.get('v_injection_strength', 0.0))
-                if v_inj > 0.0:
-                    try:
-                        xv = xv.clone()
-                        xv_r_aligned = xv[target_bsz:target_bsz * 2, :seqlen]
-                        xv[:target_bsz, :seqlen] = (
-                            xv[:target_bsz, :seqlen] * (1.0 - v_inj)
-                            + xv_r_aligned * v_inj
-                        )
-                        cfg['_debug_v_injection_strength'] = float(v_inj)
-                    except Exception as exc:
-                        raise RuntimeError(
-                            f'Untwisting attention failed in {module_name}: V tensor injection shape alignment failed.'
-                        ) from exc
 
                 xq_t = xq[:target_bsz]
                 xk_t = torch.cat([xk[:target_bsz]] + ref_k_pieces, dim=1)
@@ -1787,12 +1854,14 @@ def _patch_joint_attention_modules(dm, stats):
                     skip_reshape=True, transformer_options=transformer_options,
                 )
 
-                # Post-Attention AdaIN
-                post_a = _coerce_strength01(cfg.get('post_attention_adain_strength', 0.0))
-                if post_a > 0.0:
-                    # Directly match the target's attention output to the reference's attention output.
-                    out_t_adain = _adain(out_t, out_r, eps=1e-6)
-                    out_t = out_t * (1.0 - post_a) + out_t_adain * post_a
+                out_t, out_r = _apply_attention_output_shared_effects(
+                    out_t, out_r,
+                    cfg,
+                    target_bsz,
+                    module_name,
+                    layout='BSD',
+                    token_ranges=None,
+                )
 
                 outs = [out_t, out_r]
                 if bsz > target_bsz * 2:
@@ -1905,6 +1974,7 @@ def _adapter_helpers() -> Dict[str, Any]:
         'cross_batch_adain_qk': _cross_batch_adain_qk,
         'build_frequency_scale_vector': _build_frequency_scale_vector,
         'apply_qkv_shared_effects': _apply_qkv_shared_effects,
+        'apply_attention_output_shared_effects': _apply_attention_output_shared_effects,
         'print_rope_scale_debug': vp._untwist_print_rope_scale_debug,
         'print_rope_scale_debug_from_cfg': (
             lambda stats, cfg, module_name, device, dtype:
@@ -1953,6 +2023,7 @@ class RFInversion:
             'required': {
                 'model': ('MODEL',),
                 'reference_latent': ('LATENT',),
+                'ref_conditioning': ('CONDITIONING',),
                 'rf_mode': (['linear', 'rf_gamma', 'rf_gamma_rk2', 'fireflow'], {
                     'default': 'rf_gamma',
                     'tooltip': (
@@ -1991,9 +2062,6 @@ class RFInversion:
                     'default': False,
                     'tooltip': 'Enable verbose logging.'
                 }),
-            },
-            'optional': {
-                'ref_conditioning': ('CONDITIONING',),
             },
         }
 
@@ -2323,7 +2391,7 @@ class UnofficialExtensions:
                     'min': 0.0,
                     'max': 8.0,
                     'step': 0.01,
-                    'tooltip': 'Non-negative Axis-0 RoPE scale used only when axis0_rope_mode is constant.',
+                    'tooltip': 'RoPE scale used only when axis0_rope_mode = constant.',
                 }),
                 'v_injection_strength': ('FLOAT', {
                     'default': 0.0,
@@ -2366,6 +2434,7 @@ class UntwistingRoPE:
         return {
             'required': {
                 'model': ('MODEL',),
+                'rf_inversion': ('LATENT',),
                 'beta': ('FLOAT', {
                     'default': 50.0,
                     'min': 0.01,
@@ -2418,7 +2487,6 @@ class UntwistingRoPE:
                 }),
             },
             'optional': {
-                'rf_inversion': ('LATENT',),
                 'unofficial_extensions': ('UNTWISTING_ROPE_EXTENSIONS',),
             },
         }
