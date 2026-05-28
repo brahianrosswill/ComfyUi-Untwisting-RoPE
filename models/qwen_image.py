@@ -55,25 +55,6 @@ def _safe_int(value: Any, default: int | None = None) -> int | None:
     except Exception:
         return default
 
-
-def _coerce_bool(value: Any) -> bool:
-    if isinstance(value, str):
-        return value.strip().lower() in ("1", "true", "yes", "on", "y", "t")
-    return bool(value)
-
-
-def _coerce_strength01(value: Any, default: float = 0.0) -> float:
-    try:
-        strength = float(default if value is None else value)
-    except Exception as exc:
-        raise ValueError(f"Invalid strength value {value!r}; expected a finite float in [0, 1].") from exc
-    if not math.isfinite(strength):
-        raise ValueError(f"Invalid strength value {value!r}; expected a finite float in [0, 1].")
-    if not 0.0 <= strength <= 1.0:
-        raise ValueError(f"Invalid strength value {strength!r}; expected value in [0, 1].")
-    return strength
-
-
 def _sequence_of_ints(value: Any) -> list[int]:
     if not isinstance(value, (list, tuple)):
         return []
@@ -84,7 +65,6 @@ def _sequence_of_ints(value: Any) -> list[int]:
             return []
         out.append(i)
     return out
-
 
 def _repeat_to_batch(x: torch.Tensor, batch: int) -> torch.Tensor:
     if int(x.shape[0]) == int(batch):
@@ -116,7 +96,6 @@ def _pad_or_truncate_tokens(x: torch.Tensor, tokens: int) -> torch.Tensor:
     pad_shape = (x.shape[0], tokens - cur, *x.shape[2:])
     pad = torch.zeros(pad_shape, device=x.device, dtype=x.dtype)
     return torch.cat([x, pad], dim=1)
-
 
 # ---------------------------------------------------------------------------
 # Required adapter hooks
@@ -272,14 +251,6 @@ def is_joint_attention(module: Any) -> bool:
 # Tensor helpers used by the patched attention
 # ---------------------------------------------------------------------------
 
-def _adain(target: torch.Tensor, style: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
-    t_mean = target.mean(dim=1, keepdim=True)
-    s_mean = style.mean(dim=1, keepdim=True)
-    t_std = target.float().var(dim=1, keepdim=True, unbiased=False).add(eps).sqrt().to(target.dtype)
-    s_std = style.float().var(dim=1, keepdim=True, unbiased=False).add(eps).sqrt().to(target.dtype)
-    return (target - t_mean) / t_std * s_std + s_mean
-
-
 def _qwen_kv_heads_if_needed(k: torch.Tensor, v: torch.Tensor, q_heads: int) -> tuple[torch.Tensor, torch.Tensor]:
     """Expand KV heads for [B,H,S,D] tensors if a future Qwen variant uses GQA."""
     kv_heads = int(k.shape[1])
@@ -399,8 +370,6 @@ def _slice_mask(mask: Any, start: int, end: int) -> Optional[torch.Tensor]:
     if mask is None:
         return None
     return mask[int(start): int(end)]
-
-
 
 def _attention_with_reference_kv(
     q: torch.Tensor,
@@ -591,7 +560,6 @@ def prepare_reference_conditioning(
 ) -> tuple[Any, str]:
     """Qwen-Image reference conditioning does not need adapter preprocessing."""
     return ref_conditioning, "not-applicable"
-
 
 def patch_attention_modules(
     dm: Any,
@@ -798,7 +766,6 @@ def patch_attention_modules(
 
 def uses_reference_branch_kv() -> bool:
     return False
-
 
 # ---------------------------------------------------------------------------
 # Diagnostics
