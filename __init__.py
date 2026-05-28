@@ -1256,6 +1256,122 @@ def _cross_batch_adain_qk(xq, xk, cfg, target_bsz, strength, eps=1e-6, xv=None):
             xv[:target_bsz, s:e] = v_t * (1 - a) + _adain(v_t, v_r, eps) * a
     return (xq, xk, xv) if return_v else (xq, xk)
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Shared Q/K/V effects
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _normalize_token_ranges(ranges: Any, seqlen: int) -> List[Tuple[int, int]]:
+    """Clamp token ranges to the current sequence length and drop empty ranges."""
+    out: List[Tuple[int, int]] = []
+    for item in ranges or []:
+        if not isinstance(item, (list, tuple)) or len(item) < 2:
+            continue
+        s = max(0, min(int(item[0]), int(seqlen)))
+        e = max(s, min(int(item[1]), int(seqlen)))
+        if e > s:
+            out.append((s, e))
+    return out
+
+def _shared_effect_ranges(
+    cfg: Dict[str, Any],
+    seqlen: int,
+    token_ranges: Any = None,
+) -> List[Tuple[int, int]]:
+    """
+    Resolve the token ranges used by shared Q/K/V effects.
+
+    Adapters should pass the architecture-specific image/latent range when they
+    know it. Otherwise this falls back to cfg-provided ranges and finally to the
+    whole sequence.
+    """
+    ranges = _normalize_token_ranges(token_ranges, seqlen)
+    if ranges:
+        return ranges
+
+    ranges = _normalize_token_ranges(cfg.get('target_v_injection_ranges', None), seqlen)
+    if ranges:
+        return ranges
+
+    ranges = _normalize_token_ranges(cfg.get('target_qk_adain_ranges', None), seqlen)
+    if ranges:
+        return ranges
+
+    return [(0, int(seqlen))]
+
+def _apply_qkv_shared_effects(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    cfg: Dict[str, Any],
+    target_bsz: int,
+    module_name: str,
+    *,
+    layout: str = 'BSHD',
+    token_ranges: Any = None,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Shared core Q/K/V effect stack for adapter-owned attention patches.
+
+    Adapters expose where Q/K/V exist, their layout, and the applicable token
+    range. This function owns shared user-facing features such as
+    ``v_injection_strength`` so new shared parameters do not need to be copied
+    into every adapter.
+
+    Supported layouts:
+      - BSHD: [batch, sequence, heads, head_dim]
+      - BHSD: [batch, heads, sequence, head_dim]
+    """
+    if not isinstance(cfg, dict) or not cfg.get('enabled', False):
+        return q, k, v
+    if not (torch.is_tensor(q) and torch.is_tensor(k) and torch.is_tensor(v)):
+        return q, k, v
+    if int(target_bsz) <= 0 or int(v.shape[0]) < int(target_bsz) * 2:
+        return q, k, v
+
+    layout_u = str(layout or 'BSHD').upper()
+    if layout_u == 'BSHD':
+        q_bshd, k_bshd, v_bshd = q, k, v
+        restore = lambda qq, kk, vv: (qq, kk, vv)
+    elif layout_u == 'BHSD':
+        q_bshd, k_bshd, v_bshd = q.movedim(1, 2), k.movedim(1, 2), v.movedim(1, 2)
+        restore = lambda qq, kk, vv: (qq.movedim(1, 2), kk.movedim(1, 2), vv.movedim(1, 2))
+    else:
+        raise RuntimeError(
+            f'{vp._PREFIX} shared QKV effects failed in {module_name}: '
+            f'unsupported layout={layout!r}.'
+        )
+
+    if v_bshd.ndim != 4:
+        raise RuntimeError(
+            f'{vp._PREFIX} shared QKV effects failed in {module_name}: '
+            f'expected V as rank-4 after layout normalization, got shape={tuple(v_bshd.shape)}.'
+        )
+
+    seqlen = int(v_bshd.shape[1])
+    ranges = _shared_effect_ranges(cfg, seqlen, token_ranges)
+
+    # Shared V injection: interpolate target V toward paired reference V.
+    # This intentionally lives in the core, not in individual adapters.
+    v_inj = _coerce_strength01(cfg.get('v_injection_strength', 0.0))
+    if v_inj > 0.0:
+        v_bshd = v_bshd.clone()
+        for s, e in ranges:
+            v_t = v_bshd[:target_bsz, s:e]
+            v_r = v_bshd[target_bsz:target_bsz * 2, s:e]
+            if v_t.shape != v_r.shape:
+                raise RuntimeError(
+                    f'{vp._PREFIX} shared V injection failed in {module_name}: '
+                    f'target/ref V range shape mismatch: target={tuple(v_t.shape)} ref={tuple(v_r.shape)}.'
+                )
+            v_bshd[:target_bsz, s:e] = v_t * (1.0 - v_inj) + v_r * v_inj
+
+        cfg['_debug_v_injection_strength'] = float(v_inj)
+        cfg['_debug_v_injection_module'] = str(module_name)
+        cfg['_debug_v_injection_ranges'] = list(ranges)
+
+    return restore(q_bshd, k_bshd, v_bshd)
+
 def _repeat_kv_heads_if_needed(k, v, q_heads):
     kv = k.shape[2]
     if kv == q_heads:
@@ -1788,6 +1904,7 @@ def _adapter_helpers() -> Dict[str, Any]:
         'lerp': _lerp,
         'cross_batch_adain_qk': _cross_batch_adain_qk,
         'build_frequency_scale_vector': _build_frequency_scale_vector,
+        'apply_qkv_shared_effects': _apply_qkv_shared_effects,
         'print_rope_scale_debug': vp._untwist_print_rope_scale_debug,
         'print_rope_scale_debug_from_cfg': (
             lambda stats, cfg, module_name, device, dtype:
@@ -2417,7 +2534,6 @@ class UntwistingRoPE:
                     if installed == 0:
                         raise RuntimeError(f'{vp._PREFIX} No {disp_name} attention blocks were patched.')
 
-                    _patch_joint_attention_modules(dm, stats)
             else:
                 _patch_context_refiner_mask_modules(dm, stats)
                 _patch_patchify_and_embed(dm, stats)
