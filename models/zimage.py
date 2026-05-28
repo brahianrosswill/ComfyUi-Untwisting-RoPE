@@ -102,6 +102,7 @@ def patch_attention_modules(dm: Any, stats: Any, helpers: dict[str, Any] | None 
         "patch_context_refiner_mask_modules",
         "patch_patchify_and_embed",
         "build_frequency_scale_vector",
+        "apply_qkv_shared_effects",
     )
     missing = [name for name in required_helpers if not callable(helpers.get(name))]
     if missing:
@@ -112,6 +113,7 @@ def patch_attention_modules(dm: Any, stats: Any, helpers: dict[str, Any] | None 
     helpers["patch_patchify_and_embed"](dm, stats)
 
     build_frequency_scale_vector = helpers["build_frequency_scale_vector"]
+    apply_qkv_shared_effects = helpers["apply_qkv_shared_effects"]
     
     matched = installed = restored = 0
     patched_names = []
@@ -206,6 +208,15 @@ def patch_attention_modules(dm: Any, stats: Any, helpers: dict[str, Any] | None 
                         v_t = xv[:target_bsz, img_s:img_e]
                         v_r = xv[target_bsz:target_bsz*2, img_s:img_e]
                         xv[:target_bsz, img_s:img_e] = v_t * (1 - a) + _adain(v_t, v_r) * a
+
+                xq, xk, xv = apply_qkv_shared_effects(
+                    xq, xk, xv,
+                    cfg,
+                    target_bsz,
+                    module_name,
+                    layout="BSHD",
+                    token_ranges=[(img_s, img_e)],
+                )
 
                 xq, xk = apply_rope(xq, xk, freqs_cis)
 
