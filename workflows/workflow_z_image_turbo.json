@@ -888,42 +888,6 @@
       "bgcolor": "rgba(24,24,27,.9)"
     },
     {
-      "id": 625,
-      "type": "UnofficialExtensions",
-      "pos": [
-        751.7264207977231,
-        678.844885774481
-      ],
-      "size": [
-        332.76171875,
-        130
-      ],
-      "flags": {},
-      "order": 12,
-      "mode": 0,
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "unofficial_extensions",
-          "type": "UNTWISTING_ROPE_EXTENSIONS",
-          "links": [
-            1553
-          ]
-        }
-      ],
-      "properties": {
-        "cnr_id": "untwistingrope",
-        "ver": "ec08050c160633dc890972120598e2912ce26870",
-        "Node name for S&R": "UnofficialExtensions"
-      },
-      "widgets_values": [
-        false,
-        0.5,
-        "match_axes",
-        1
-      ]
-    },
-    {
       "id": 623,
       "type": "UntwistingRoPE",
       "pos": [
@@ -980,6 +944,43 @@
         0.5,
         "0-999",
         true
+      ]
+    },
+    {
+      "id": 625,
+      "type": "UnofficialExtensions",
+      "pos": [
+        751.7264207977231,
+        678.844885774481
+      ],
+      "size": [
+        332.76171875,
+        154
+      ],
+      "flags": {},
+      "order": 12,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "unofficial_extensions",
+          "type": "UNTWISTING_ROPE_EXTENSIONS",
+          "links": [
+            1553
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "untwistingrope",
+        "ver": "ec08050c160633dc890972120598e2912ce26870",
+        "Node name for S&R": "UnofficialExtensions"
+      },
+      "widgets_values": [
+        false,
+        0.5,
+        "match_axes",
+        1,
+        0.2
       ]
     }
   ],
@@ -1191,8 +1192,8 @@
     "ds": {
       "scale": 0.6115909044841509,
       "offset": [
-        -388.02840119678405,
-        -575.6481166537227
+        -320.44513158759315,
+        -425.76575846359304
       ]
     },
     "frontendVersion": "1.44.19",
