@@ -10,9 +10,6 @@ import torch
 import comfy.utils
 import comfy.patcher_extension
 import latent_preview
-from comfy.ldm.flux.math import apply_rope
-from comfy.ldm.modules.attention import optimized_attention_masked
-
 from . import verbose_prints as vp
 from .sdpa_fix import install_optimized_attention_override as _maybe_install_untwist_attention_override
 
@@ -586,12 +583,6 @@ def _rf_build_cache_from_sampler_sigmas(
         f'z_final std={z.std().item():.4f}  parameterization={parameterization}'
     )
     return cache, eps, sigmas
-
-def _rf_increment_reference_one_step(*args, **kwargs) -> Tuple[torch.Tensor, torch.Tensor]:
-    raise RuntimeError(
-        'RF direct one-step path is disabled in strict mode. '
-        'The sampler sigma schedule must be captured and the full RF trajectory must be built.'
-    )
 
 def _find_sigma_schedule(obj: Any, depth: int = 0) -> Optional[List[float]]:
     if depth > 6 or obj is None:
@@ -1233,6 +1224,23 @@ def _adain(target, style, eps=1e-6):
     s_std  = style.float().var(dim=1, keepdim=True, unbiased=False).add(eps).sqrt().to(target.dtype)
     return (target - t_mean) / t_std * s_std + s_mean
 
+def _reference_variance_channel_mask(style: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+    """
+    Build a [B, 1, H, D] mask from reference/style V variance across sequence.
+
+    High mask values indicate channels whose reference activations vary strongly
+    over tokens, which tends to correspond to texture/color/style-bearing
+    features.
+    """
+    if not torch.is_tensor(style) or style.ndim != 4:
+        raise RuntimeError(
+            f'{vp._PREFIX} variance-gated V effects expected reference V as rank-4 BSHD, '
+            f'got {tuple(style.shape) if torch.is_tensor(style) else type(style).__name__}.'
+        )
+    style_var = style.float().var(dim=1, keepdim=True, unbiased=False)
+    style_var_max = style_var.amax(dim=-1, keepdim=True).clamp_min(eps)
+    return (style_var / style_var_max).clamp(0.0, 1.0).detach()
+
 def _cross_batch_adain_qk(xq, xk, cfg, target_bsz, strength, eps=1e-6, xv=None):
     return_v = xv is not None
     if target_bsz <= 0 or xq.shape[0] < target_bsz * 2:
@@ -1255,7 +1263,6 @@ def _cross_batch_adain_qk(xq, xk, cfg, target_bsz, strength, eps=1e-6, xv=None):
             v_r = xv[target_bsz:target_bsz*2, s:e]
             xv[:target_bsz, s:e] = v_t * (1 - a) + _adain(v_t, v_r, eps) * a
     return (xq, xk, xv) if return_v else (xq, xk)
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Shared Q/K/V effects
@@ -1385,6 +1392,32 @@ def _apply_qkv_shared_effects(
         cfg['_debug_orthogonal_v_injection_module'] = str(module_name)
         cfg['_debug_orthogonal_v_injection_ranges'] = list(ranges)
 
+    # Shared variance-gated V-AdaIN:
+    var_v_adain = _coerce_strength01(cfg.get('variance_gated_v_adain', 0.0))
+    if var_v_adain > 0.0:
+        v_bshd = v_bshd.clone()
+        eps = 1e-6
+
+        for s, e in ranges:
+            v_t = v_bshd[:target_bsz, s:e]
+            v_r = v_bshd[target_bsz:target_bsz * 2, s:e]
+            if v_t.shape != v_r.shape:
+                raise RuntimeError(
+                    f'{vp._PREFIX} shared variance-gated V-AdaIN failed in {module_name}: '
+                    f'target/ref V range shape mismatch: target={tuple(v_t.shape)} ref={tuple(v_r.shape)}.'
+                )
+
+            # [B, 1, H, D], normalized per head over the head-dim/channel axis.
+            v_r_mask = _reference_variance_channel_mask(v_r, eps=eps)
+            v_t_adain = _adain(v_t, v_r, eps=eps)
+            alpha = (v_r_mask * var_v_adain).to(v_t.dtype)
+
+            v_bshd[:target_bsz, s:e] = v_t * (1.0 - alpha) + v_t_adain * alpha
+
+        cfg['_debug_variance_gated_v_adain'] = float(var_v_adain)
+        cfg['_debug_variance_gated_v_adain_module'] = str(module_name)
+        cfg['_debug_variance_gated_v_adain_ranges'] = list(ranges)
+
     q_bshd = _apply_implicit_attention_entropy_scaling(
         q_bshd, k_bshd,
         cfg,
@@ -1394,7 +1427,6 @@ def _apply_qkv_shared_effects(
     )
 
     return restore(q_bshd, k_bshd, v_bshd)
-
 
 def _apply_attention_output_shared_effects(
     out_t: torch.Tensor,
@@ -2384,25 +2416,36 @@ class UnofficialExtensions:
                     'step': 0.01,
                     'tooltip': 'Matches target attention sharpness/diffuseness to the reference attention entropy.',
                 }),
+                'variance_gated_v_adain': ('FLOAT', {
+                    'default': 0.0,
+                    'min': 0.0,
+                    'max': 1.0,
+                    'step': 0.01,
+                    'tooltip': (
+                        'Applies V AdaIN only on high-reference-variance channels. '
+                    ),
+                }),
             },
         }
 
     def build(
         self,
         adain_on_v: bool = False,
-        orthogonal_v_injection: float = 0.0,
         post_attention_adain_strength: float = 0.0,
         axis0_rope_mode: str = 'default',
         axis0_rope_scale: float = 0.0,
+        orthogonal_v_injection: float = 0.0,
         attention_entropy_scaling: float = 0.0,
+        variance_gated_v_adain: float = 0.0,
     ):
         return ({
             'adain_on_v': vp._coerce_bool(adain_on_v),
-            'orthogonal_v_injection': _coerce_strength01(orthogonal_v_injection),
             'post_attention_adain_strength': _coerce_strength01(post_attention_adain_strength),
             'axis0_rope_mode': _coerce_axis0_rope_mode(axis0_rope_mode),
             'axis0_rope_scale': _coerce_axis0_rope_scale(axis0_rope_scale, default=0.0),
+            'orthogonal_v_injection': _coerce_strength01(orthogonal_v_injection),
             'attention_entropy_scaling': _coerce_strength01(attention_entropy_scaling),
+            'variance_gated_v_adain': _coerce_strength01(variance_gated_v_adain),
         },)
 
 class UntwistingRoPE:
@@ -2508,6 +2551,7 @@ class UntwistingRoPE:
         ext_cfg = unofficial_extensions if isinstance(unofficial_extensions, dict) else {}
         adain_on_v = vp._coerce_bool(ext_cfg.get('adain_on_v', False))
         orthogonal_v_injection = _coerce_strength01(ext_cfg.get('orthogonal_v_injection', 0.0))
+        variance_gated_v_adain = _coerce_strength01(ext_cfg.get('variance_gated_v_adain', 0.0))
         post_attention_adain_strength = _coerce_strength01(ext_cfg.get('post_attention_adain_strength', 0.0))
         axis0_rope_mode = _coerce_axis0_rope_mode(
             ext_cfg.get('axis0_rope_mode', None),
@@ -2536,6 +2580,7 @@ class UntwistingRoPE:
             f'adain={adain_strength:.2f}  '
             f'unofficial: adain_on_v={adain_on_v}  '
             f'orthogonal_v_injection={orthogonal_v_injection:.2f}  '
+            f'variance_gated_v_adain={variance_gated_v_adain:.2f}  '
             f'post_attention_adain_strength={post_attention_adain_strength:.2f}  '
             f'axis0_rope_mode={axis0_rope_mode}  '
             f'axis0_rope_scale={axis0_rope_scale:.3f}  '
@@ -2629,6 +2674,7 @@ class UntwistingRoPE:
                 'adain_strength': float(adain_strength),
                 'adain_on_v': adain_on_v,
                 'orthogonal_v_injection': orthogonal_v_injection,
+                'variance_gated_v_adain': variance_gated_v_adain,
                 'post_attention_adain_strength': post_attention_adain_strength,
                 'axis0_rope_mode': axis0_rope_mode,
                 'axis0_rope_scale': axis0_rope_scale,
