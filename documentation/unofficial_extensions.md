@@ -39,3 +39,9 @@ Gives pretty good results at low strength (~0.2).
 Scales the target's variance of the attention-score `QKᵀ` towards the reference's. It does not compute the full Shannon entropy and uses a Gram-matrix approximation as a cheaper entropy-like signal.
 
 Can work well at full strength for making images look cleaner.
+
+## `variance_gated_v_adain`
+
+Applies AdaIN to the target V tensor but only on reference channels with high variance.
+
+This makes the image even cleaner and further enhances the transfer style at full strength.
