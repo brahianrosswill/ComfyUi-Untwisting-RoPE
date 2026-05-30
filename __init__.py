@@ -2820,10 +2820,11 @@ class UntwistingRoPE:
                     else:
                         raise RuntimeError(
                             f'UntwistingRoPE failed: spatial mismatch input_x={tuple(input_x.shape[-2:])} '
-                            f'ref_noisy={tuple(ref_noisy.shape[-2:])}.'
+                            f'ref_noisy={tuple(ref_noisy.shape[-2:])}. '
+                            f'Make sure the resolution of the reference image fed into the RF inversion node matches the final image resolution (same width and height).'
                         )
                 except Exception as exc:
-                    raise RuntimeError('UntwistingRoPE RF latent preparation failed. Make sure the resolution of the reference image fed into the RF inversion node matches the final image resolution (same width and height).') from exc
+                    raise RuntimeError('UntwistingRoPE RF latent preparation failed.') from exc
 
             c['transformer_options'] = to
 
