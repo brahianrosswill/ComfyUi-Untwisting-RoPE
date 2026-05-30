@@ -1249,7 +1249,6 @@ def _cross_batch_adain_qk(xq, xk, cfg, target_bsz, strength, eps=1e-6, xv=None):
     if a <= 0.0:
         return (xq, xk, xv) if return_v else (xq, xk)
     seqlen = xq.shape[1]
-    apply_v = return_v and vp._coerce_bool(cfg.get('adain_on_v', False))
     for s, e in (cfg.get('target_qk_adain_ranges') or []):
         s, e = max(0, int(s)), min(int(e), seqlen)
         if e <= s:
@@ -1258,10 +1257,6 @@ def _cross_batch_adain_qk(xq, xk, cfg, target_bsz, strength, eps=1e-6, xv=None):
         q_r, k_r = xq[target_bsz:target_bsz*2, s:e], xk[target_bsz:target_bsz*2, s:e]
         xq[:target_bsz, s:e] = q_t * (1 - a) + _adain(q_t, q_r, eps) * a
         xk[:target_bsz, s:e] = k_t * (1 - a) + _adain(k_t, k_r, eps) * a
-        if apply_v:
-            v_t = xv[:target_bsz, s:e]
-            v_r = xv[target_bsz:target_bsz*2, s:e]
-            xv[:target_bsz, s:e] = v_t * (1 - a) + _adain(v_t, v_r, eps) * a
     return (xq, xk, xv) if return_v else (xq, xk)
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1352,14 +1347,9 @@ def _apply_qkv_shared_effects(
         cfg_for_adain['target_qk_adain_ranges'] = list(ranges)
         q_bshd = q_bshd.clone()
         k_bshd = k_bshd.clone()
-        v_for_adain = v_bshd.clone() if vp._coerce_bool(cfg.get('adain_on_v', False)) else None
-        out = _cross_batch_adain_qk(
-            q_bshd, k_bshd, cfg_for_adain, int(target_bsz), float(adain_strength), xv=v_for_adain
+        q_bshd, k_bshd = _cross_batch_adain_qk(
+            q_bshd, k_bshd, cfg_for_adain, int(target_bsz), float(adain_strength)
         )
-        if v_for_adain is not None:
-            q_bshd, k_bshd, v_bshd = out
-        else:
-            q_bshd, k_bshd = out
         cfg['_debug_qk_adain_strength'] = float(adain_strength)
         cfg['_debug_qk_adain_module'] = str(module_name)
         cfg['_debug_qk_adain_ranges'] = list(ranges)
@@ -2375,10 +2365,6 @@ class UnofficialExtensions:
     def INPUT_TYPES(cls):
         return {
             'required': {
-                'adain_on_v': ('BOOLEAN', {
-                    'default': False,
-                    'tooltip': 'Also apply AdaIN to value/V activations. Off keeps Q/K-only AdaIN.',
-                }),
                 'post_attention_adain_strength': ('FLOAT', {
                     'default': 0.5,
                     'min': 0.0,
@@ -2430,7 +2416,6 @@ class UnofficialExtensions:
 
     def build(
         self,
-        adain_on_v: bool = False,
         post_attention_adain_strength: float = 0.0,
         axis0_rope_mode: str = 'default',
         axis0_rope_scale: float = 0.0,
@@ -2439,7 +2424,6 @@ class UnofficialExtensions:
         variance_gated_v_adain: float = 0.0,
     ):
         return ({
-            'adain_on_v': vp._coerce_bool(adain_on_v),
             'post_attention_adain_strength': _coerce_strength01(post_attention_adain_strength),
             'axis0_rope_mode': _coerce_axis0_rope_mode(axis0_rope_mode),
             'axis0_rope_scale': _coerce_axis0_rope_scale(axis0_rope_scale, default=0.0),
@@ -2549,7 +2533,6 @@ class UntwistingRoPE:
         seed = int(rf_cfg.get('seed', 42))
 
         ext_cfg = unofficial_extensions if isinstance(unofficial_extensions, dict) else {}
-        adain_on_v = vp._coerce_bool(ext_cfg.get('adain_on_v', False))
         orthogonal_v_injection = _coerce_strength01(ext_cfg.get('orthogonal_v_injection', 0.0))
         variance_gated_v_adain = _coerce_strength01(ext_cfg.get('variance_gated_v_adain', 0.0))
         post_attention_adain_strength = _coerce_strength01(ext_cfg.get('post_attention_adain_strength', 0.0))
@@ -2578,7 +2561,7 @@ class UntwistingRoPE:
         vp._vprint(stats,
             f'{vp._PREFIX} blocks: {blocks if blocks.strip() else "all"}  '
             f'adain={adain_strength:.2f}  '
-            f'unofficial: adain_on_v={adain_on_v}  '
+            f'unofficial: '
             f'orthogonal_v_injection={orthogonal_v_injection:.2f}  '
             f'variance_gated_v_adain={variance_gated_v_adain:.2f}  '
             f'post_attention_adain_strength={post_attention_adain_strength:.2f}  '
@@ -2672,7 +2655,6 @@ class UntwistingRoPE:
                 'active_blocks': parsed_blocks,
                 'apply_adain': True,
                 'adain_strength': float(adain_strength),
-                'adain_on_v': adain_on_v,
                 'orthogonal_v_injection': orthogonal_v_injection,
                 'variance_gated_v_adain': variance_gated_v_adain,
                 'post_attention_adain_strength': post_attention_adain_strength,
