@@ -779,6 +779,14 @@ def _sigma_to_progress(timestep: torch.Tensor, sampler_sigmas: List[float]) -> f
 def _lerp(a: float, b: float, t: float) -> float:
     return float(a + (b - a) * t)
 
+def _triangle_ramp01(progress: Any) -> float:
+    """0→1 from progress 0→0.5, then 1→0 from progress 0.5→1."""
+    p = _coerce_strength01(progress)
+    return max(0.0, min(1.0, 1.0 - abs((2.0 * p) - 1.0)))
+
+def _triangle_ramp_to_target(target: float, progress: Any) -> float:
+    return _lerp(0.0, _coerce_strength01(target), _triangle_ramp01(progress))
+
 def _repeat_conditioning_tree(obj: Any, src: int, tgt: int) -> Any:
     if torch.is_tensor(obj):
         try:
@@ -1442,8 +1450,12 @@ def _apply_qkv_shared_effects(
         cfg['_debug_key_subspace_alignment_module'] = str(module_name)
         cfg['_debug_key_subspace_alignment_ranges'] = list(ranges)
 
-    # Shared cosine-gated V injection:
-    cosine_v_inj = _coerce_strength01(cfg.get('cosine_gated_v_injection', 0.0))
+    # Shared cosine-gated V injection.
+    # Triangular ramp: 0.0 at progress=0, target at progress=0.5, back to 0.0 at progress=1.
+    cosine_v_inj_target = _coerce_strength01(cfg.get('cosine_gated_v_injection', 0.0))
+    cosine_v_inj_progress = _coerce_strength01(cfg.get('progress', 0.0))
+    cosine_v_inj_ramp = _triangle_ramp01(cosine_v_inj_progress)
+    cosine_v_inj = _lerp(0.0, cosine_v_inj_target, cosine_v_inj_ramp)
     if cosine_v_inj > 0.0:
         v_bshd = v_bshd.clone()
         for s, e in ranges:
@@ -1460,11 +1472,18 @@ def _apply_qkv_shared_effects(
             )
 
         cfg['_debug_cosine_gated_v_injection_strength'] = float(cosine_v_inj)
+        cfg['_debug_cosine_gated_v_injection_target'] = float(cosine_v_inj_target)
+        cfg['_debug_cosine_gated_v_injection_progress'] = float(cosine_v_inj_progress)
+        cfg['_debug_cosine_gated_v_injection_ramp'] = float(cosine_v_inj_ramp)
         cfg['_debug_cosine_gated_v_injection_module'] = str(module_name)
         cfg['_debug_cosine_gated_v_injection_ranges'] = list(ranges)
 
-    # Shared variance-gated V-AdaIN:
-    var_v_adain = _coerce_strength01(cfg.get('variance_gated_v_adain', 0.0))
+    # Shared variance-gated V-AdaIN.
+    # Triangular ramp: 0.0 at progress=0, target at progress=0.5, back to 0.0 at progress=1.
+    var_v_adain_target = _coerce_strength01(cfg.get('variance_gated_v_adain', 0.0))
+    var_v_adain_progress = _coerce_strength01(cfg.get('progress', 0.0))
+    var_v_adain_ramp = _triangle_ramp01(var_v_adain_progress)
+    var_v_adain = _lerp(0.0, var_v_adain_target, var_v_adain_ramp)
     if var_v_adain > 0.0:
         v_bshd = v_bshd.clone()
         eps = 1e-6
@@ -1486,6 +1505,9 @@ def _apply_qkv_shared_effects(
             v_bshd[:target_bsz, s:e] = v_t * (1.0 - alpha) + v_t_adain * alpha
 
         cfg['_debug_variance_gated_v_adain'] = float(var_v_adain)
+        cfg['_debug_variance_gated_v_adain_target'] = float(var_v_adain_target)
+        cfg['_debug_variance_gated_v_adain_progress'] = float(var_v_adain_progress)
+        cfg['_debug_variance_gated_v_adain_ramp'] = float(var_v_adain_ramp)
         cfg['_debug_variance_gated_v_adain_module'] = str(module_name)
         cfg['_debug_variance_gated_v_adain_ranges'] = list(ranges)
 
@@ -1545,7 +1567,11 @@ def _apply_attention_output_shared_effects(
     seqlen = int(out_t.shape[1])
     ranges = _shared_effect_ranges(cfg, seqlen, token_ranges)
 
-    post_a = _coerce_strength01(cfg.get('post_attention_adain_strength', 0.0))
+    # Triangular ramp: 0.0 at progress=0, target at progress=0.5, back to 0.0 at progress=1.
+    post_a_target = _coerce_strength01(cfg.get('post_attention_adain_strength', 0.0))
+    post_a_progress = _coerce_strength01(cfg.get('progress', 0.0))
+    post_a_ramp = _triangle_ramp01(post_a_progress)
+    post_a = _lerp(0.0, post_a_target, post_a_ramp)
     if post_a > 0.0:
         out_t = out_t.clone()
         for s, e in ranges:
@@ -1559,6 +1585,9 @@ def _apply_attention_output_shared_effects(
             out_t[:, s:e] = t_slice * (1.0 - post_a) + _adain(t_slice, r_slice, eps=1e-6) * post_a
 
         cfg['_debug_post_attention_adain_strength'] = float(post_a)
+        cfg['_debug_post_attention_adain_target'] = float(post_a_target)
+        cfg['_debug_post_attention_adain_progress'] = float(post_a_progress)
+        cfg['_debug_post_attention_adain_ramp'] = float(post_a_ramp)
         cfg['_debug_post_attention_adain_module'] = str(module_name)
         cfg['_debug_post_attention_adain_ranges'] = list(ranges)
 
