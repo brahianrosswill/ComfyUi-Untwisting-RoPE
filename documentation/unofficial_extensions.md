@@ -2,6 +2,8 @@
 
 These options are experimental and are not part of the original Untwisting RoPE paper.
 
+You can see the difference it makes [here](https://github.com/BigStationW/ComfyUi-Untwisting-RoPE/tree/main/Examples/with_vs_without).
+
 ## `post_attention_adain`
 
  Matches the target attention output statistics to the reference attention output.
