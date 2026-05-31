@@ -2154,7 +2154,7 @@ class RFInversion:
                 'reference_latent': ('LATENT',),
                 'ref_conditioning': ('CONDITIONING',),
                 'rf_mode': (['linear', 'rf_gamma', 'rf_gamma_rk2', 'fireflow', 'gnri'], {
-                    'default': 'rf_gamma',
+                    'default': 'gnri',
                     'tooltip': (
                         'Selects the ODE solver used to build the noisy reference trajectory: linear (no model calls -> random noise), rf_gamma (Euler), rf_gamma_rk2 (Runge-Kutta midpoint), fireflow (FireFlow recurrence), or gnri (single-pass guided Newton-Raphson inversion step).'
                     ),
@@ -2181,7 +2181,7 @@ class RFInversion:
                     'tooltip': "After each RF step, blends the latent's mean/std toward the linear target to prevent feature drift; 0 = off, 1 = full correction."
                 }),
                 'pmi_alpha': ('FLOAT', {
-                    'default': 0.5,
+                    'default': 0.0,
                     'min': 0.0,
                     'max': 1.0,
                     'step': 0.05,
