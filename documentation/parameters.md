@@ -8,7 +8,7 @@ RF Inversion builds a noisy trajectory on the reference image, so the model sees
 |-----------|---------|-------------|
 | `reference_latent` | — | The clean reference image latent that the inversion trajectory is built from. |
 | `ref_conditioning` | *(optional)* | Text conditioning associated with the reference image. In practice, it's better to put the target conditioning to it. |
-| `rf_mode` | `gnri` | Selects the ODE solver used to build the noisy reference trajectory: `linear` (no model calls -> random noise), `rf_gamma` (Euler), `rf_gamma_rk2` (Runge-Kutta midpoint), `fireflow` [(FireFlow recurrence)](https://arxiv.org/abs/2412.07517?utm_source=chatgpt.com) or `gnri` [(Guided Newton-Raphson Inversion)](https://barakmam.github.io/rnri.github.io/) |
+| `rf_mode` | `gnri` | Selects the ODE solver used to build the noisy reference trajectory: `linear` (no model calls -> random noise), `rf_gamma` (Euler), `rf_gamma_rk2` (Runge-Kutta midpoint) or `fireflow` [(FireFlow recurrence)](https://arxiv.org/abs/2412.07517?utm_source=chatgpt.com) |
 | `gamma` | `0.50` | Blends weight between model velocity and prior velocity (0 = pure prior / straight path, 1 = pure model); only used by `rf_gamma` and `rf_gamma_rk2`. |
 | `gamma_curve` | `2.00` | Applies a bell-shaped schedule to `gamma` across the sigma range, concentrating model influence toward mid-noise levels; 0 disables the curve. |
 | `norm_strength` | `1.00` | After each RF step, blends the latent's mean/std towards the linear target to prevent feature drift; 0 = off, 1 = full correction. |
