@@ -465,6 +465,9 @@ def _rf_build_cache_from_sampler_sigmas(
     rf_total_steps = max(1, len(sigmas) - 1)
     rf_progress_start_time = time.time()
 
+    # RF step quality diagnostics.
+    path_prev_speed: Optional[float] = None
+
     for step_index in vp._rf_step_iterator(rf_total_steps):
         step_i = int(step_index) + 1
         s = sigmas[step_i]
@@ -611,6 +614,7 @@ def _rf_build_cache_from_sampler_sigmas(
         z_min  = float(z.min().item())
         z_max  = float(z.max().item())
         dz_abs = float((z - z_prev).abs().mean().item())
+
         cache[round(sigma_cur, 6)] = z.detach().clone()
 
         vp._rf_vprint(stats,
@@ -620,6 +624,16 @@ def _rf_build_cache_from_sampler_sigmas(
             f'|model|={vm_abs:.5f}  |prior|={vp_abs:.5f}  |Δz|={dz_abs:.5f}  {extra}\n'
             f'{vp._rf_prefix(stats)}       z_σ mean={z_mean:.4f}  std={z_std:.4f}  '
             f'min={z_min:.4f}  max={z_max:.4f}'
+        )
+        path_prev_speed = vp._rf_print_step_quality(
+            stats,
+            ref_clean=ref_clean,
+            eps=eps,
+            z=z,
+            sigma_cur=sigma_cur,
+            delta=delta,
+            dz_abs=dz_abs,
+            path_prev_speed=path_prev_speed,
         )
 
         vp._rf_progress_snapshot(
