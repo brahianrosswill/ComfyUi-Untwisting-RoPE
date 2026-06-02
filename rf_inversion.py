@@ -1023,8 +1023,6 @@ def _rf_prebuild_cache_with_sampler_model_call(
     debug_store['preflight_model_call_active'] = True
     debug_store['preflight_done_run'] = run_count
     try:
-        if vp._coerce_bool(verbose_flag):
-            print(f'{vp._RF_PREFIX} RF prebuild: warming cache before sampler tqdm run={run_count}')
         with torch.no_grad():
             model_wrap(x0, sigma_tensor, model_options=model_options, seed=seed)
     except Exception as exc:
