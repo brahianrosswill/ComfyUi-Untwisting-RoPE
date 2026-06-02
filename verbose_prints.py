@@ -169,11 +169,6 @@ def _rf_scalar_fmt(value: Any, digits: int = 6) -> str:
     except Exception as exc:
         raise RuntimeError(f'{_RF_PREFIX} scalar formatting failed for value={value!r}: {exc}') from exc
 
-
-def _rf_mean_or_none(values: List[float]) -> Optional[float]:
-    return (sum(values) / len(values)) if values else None
-
-
 def _rf_print_step_quality(
     stats: Optional[Any],
     ref_clean: torch.Tensor,
@@ -378,27 +373,19 @@ def _coerce_sigma_sequence(value: Any) -> Optional[List[float]]:
 def _rf_print_sampler_capture(verbose_flag: Any, found: Any, run_count: Any) -> None:
     if not _coerce_bool(verbose_flag):
         return
-    print(
-        f'{_RF_PREFIX} RFInversion sampler_sample: captured {len(found)} sigmas  '
-        f'run={run_count}  seed=42'
-    )
-
 
 def _rf_print_persistent_cache_hit(verbose_flag: Any, cache_key: str, built_cache: Any) -> None:
     if _coerce_bool(verbose_flag):
         print(f'{_RF_PREFIX}   RF persistent cache HIT key={str(cache_key)[:12]} cache_items={len(built_cache)}')
 
-
 def _rf_print_persistent_cache_miss(verbose_flag: Any, cache_key: str) -> None:
     if _coerce_bool(verbose_flag):
         print(f'{_RF_PREFIX}   RF persistent cache MISS key={str(cache_key)[:12]} → building now')
-
 
 def _rf_print_direct_fallback(verbose_flag: Any, sigma: float) -> None:
     raise RuntimeError(
         f'{_RF_PREFIX} No sampler sigmas captured; direct one-step RF path is disabled for σ={float(sigma):.6f}'
     )
-
 
 def _rf_print_traceback(verbose_flag: Any, trace_text: str) -> None:
     if _coerce_bool(verbose_flag) and trace_text:
@@ -628,6 +615,7 @@ __all__ = [
     '_rf_scalar_fmt',
     '_rf_model_identity',
     '_rf_print_model_identity',
+    '_rf_print_step_quality',
     '_rf_step_iterator',
     '_rf_format_duration',
     '_rf_progress_snapshot',
