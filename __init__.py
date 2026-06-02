@@ -156,7 +156,7 @@ def _velocity_from_pred(
 # RF utility helpers
 # ═══════════════════════════════════════════════════════════════════════════════
 
-_GAMMA_RF_MODES = {'rf_gamma', 'rf_gamma_rk2'}
+_GAMMA_RF_MODES = {'rf_gamma', 'rf_gamma_rk2', 'fireflow'}
 
 def _coerce_gamma_curve(value: Any = 0.0) -> float:
     """Clamp gamma_curve to the supported range."""
@@ -242,7 +242,7 @@ def _rf_gamma_for_mode(
     gamma_curve: float = 0.0,
 ) -> float:
     mode, gamma_curve = _normalize_rf_mode_and_gamma_curve(mode, gamma_curve)
-    if mode in ('linear', 'fireflow'):
+    if mode == 'linear':
         return 0.0
     if gamma_curve > 0.0 and mode in _GAMMA_RF_MODES:
         s = max(0.0, min(1.0, 0.5 * (float(sigma_prev) + float(sigma_cur))))
@@ -522,26 +522,35 @@ def _rf_build_cache_from_sampler_sigmas(
         elif mode == 'fireflow':
             # ── (Deng et al., ICML 2025) ─────────
             if next_step_velocity is None:
-                v_pred, ok, raw_preview = _call_model_as_velocity(z, sigma_prev, ' fresh')
-                vm_abs = float(v_pred.abs().mean().item())
-                pred_source = 'fresh'
+                v_model_pred, ok, raw_preview = _call_model_as_velocity(z, sigma_prev, ' fresh')
+                denom_prev = max(1.0 - sigma_prev, 1e-7)
+                v_prior_pred = (eps - z) / denom_prev
+                v_pred = gamma_eff * v_model_pred + (1.0 - gamma_eff) * v_prior_pred
+                vm_abs = float(v_model_pred.abs().mean().item())
+                pred_source = 'fresh_blend'
             else:
                 v_pred = next_step_velocity.to(device=device, dtype=dtype)
                 vm_abs = float(v_pred.abs().mean().item())
-                pred_source = 'reused_mid'
+                pred_source = 'reused_blend'
 
             z_mid      = z + 0.5 * delta * v_pred
             sigma_mid  = sigma_prev + 0.5 * delta
             v_mid, ok, raw_preview_mid = _call_model_as_velocity(z_mid, sigma_mid, ' mid')
             vm_abs_mid = float(v_mid.abs().mean().item())
 
-            v_mid_total = _apply_pmi_if_enabled(v_mid, sigma_cur, post_update_corrected=False)
+            denom_mid = max(1.0 - sigma_mid, 1e-7)
+            v_prior_mid = (eps - z_mid) / denom_mid
+            vp_abs = float(v_prior_mid.detach().abs().mean().item())
+            vp_sum += vp_abs
+
+            v_mid_total = gamma_eff * v_mid + (1.0 - gamma_eff) * v_prior_mid
+            v_mid_total = _apply_pmi_if_enabled(v_mid_total, sigma_cur, post_update_corrected=False)
             next_step_velocity = v_mid_total.detach().clone()
             z = z + delta * v_mid_total
             _preview_once(step_i - 1, raw_preview_mid, z)
             extra = (
                 f'FireFlow pred={pred_source}  σ_mid={sigma_mid:.6f}  '
-                f'|v_pred|={vm_abs:.5f}  |v_mid|={vm_abs_mid:.5f}'
+                f'|v_pred|={vm_abs:.5f}  |v_mid|={vm_abs_mid:.5f}  |prior_mid|={vp_abs:.5f}'
             )
             if use_pmi:
                 extra += f'  PMI step={pmi_state.step_count}'
@@ -2186,7 +2195,7 @@ class RFInversion:
                 'rf_mode': (['linear', 'rf_gamma', 'rf_gamma_rk2', 'fireflow'], {
                     'default': 'rf_gamma',
                     'tooltip': (
-                        'Selects the ODE solver used to build the noisy reference trajectory: linear (no model calls -> random noise), rf_gamma (Euler), rf_gamma_rk2 (Runge-Kutta midpoint), or fireflow (FireFlow recurrence).'
+                        'Selects the ODE solver used to build the noisy reference trajectory: linear (no model calls -> random noise), rf_gamma (Euler), rf_gamma_rk2 (Runge-Kutta midpoint), or fireflow (FireFlow midpoint recurrence).'
                     ),
                 }),
                 'gamma': ('FLOAT', {
@@ -2194,7 +2203,7 @@ class RFInversion:
                     'min': 0.0,
                     'max': 1.0,
                     'step': 0.01,
-                    'tooltip': 'Blends weight between model velocity and prior velocity (0 = pure prior / straight path, 1 = pure model); only used by rf_gamma and rf_gamma_rk2.'
+                    'tooltip': 'Blends weight between model velocity and prior velocity (0 = pure prior / straight path, 1 = pure model); used by rf_gamma, rf_gamma_rk2, and fireflow.'
                 }),
                 'gamma_curve': ('FLOAT', {
                     'default': 2.0,
@@ -2228,10 +2237,10 @@ class RFInversion:
         self,
         model,
         reference_latent,
-        rf_mode='fireflow',
-        gamma=0.3,
-        gamma_curve=0.0,
-        norm_strength=0.0,
+        rf_mode='rf_gamma_rk2',
+        gamma=0.5,
+        gamma_curve=2.0,
+        norm_strength=1.0,
         pmi_alpha=0.0,
         verbose=False,
         ref_conditioning=None,
@@ -2700,10 +2709,10 @@ class UntwistingRoPE:
         stats.rf_prefix = vp._RF_PREFIX
         debug_store = _rf_new_debug_store()
 
-        rf_mode = str(rf_cfg.get('rf_mode', 'fireflow'))
-        gamma = float(rf_cfg.get('gamma', 0.3))
-        gamma_curve = float(rf_cfg.get('gamma_curve', 0.0))
-        norm_strength = float(rf_cfg.get('norm_strength', 0.0))
+        rf_mode = str(rf_cfg.get('rf_mode', 'rf_gamma_rk2'))
+        gamma = float(rf_cfg.get('gamma', 0.5))
+        gamma_curve = float(rf_cfg.get('gamma_curve', 2.0))
+        norm_strength = float(rf_cfg.get('norm_strength', 1.0))
         pmi_alpha = float(rf_cfg.get('pmi_alpha', 0.4))
         seed = int(rf_cfg.get('seed', 42))
 
