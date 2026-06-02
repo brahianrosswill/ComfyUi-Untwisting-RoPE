@@ -1708,6 +1708,7 @@ class UntwistingRoPE:
             sigma = _sigma_from_timestep(timestep)
             progress = _sigma_to_progress(timestep, list(rf_state['sampler_sigmas']))
             target_b = int(input_x.shape[0])
+            is_preflight_call = bool(rf_state.get('preflight_model_call_active', False))
 
             cfg: Dict[str, Any] = {
                 'enabled': True,
@@ -1730,6 +1731,7 @@ class UntwistingRoPE:
                 'progress': progress,
                 'sigma': sigma,
                 'wrapper_call': call_n,
+                '_rope_scale_debug_printed': is_preflight_call,
             }
             default_cfg = getattr(adapter, 'default_runtime_cfg', None)
             if not callable(default_cfg):
@@ -1747,7 +1749,10 @@ class UntwistingRoPE:
             rf_cache_hit = False
             rf_cond_mode = 'not-connected'
             ref_mode = 'target-only'
-            should_print = vp._coerce_bool(getattr(stats, 'verbose', False))
+            should_print = (
+                vp._coerce_bool(getattr(stats, 'verbose', False))
+                and not is_preflight_call
+            )
 
             if rf_active and torch.is_tensor(ref_clean_cpu):
                 try:
