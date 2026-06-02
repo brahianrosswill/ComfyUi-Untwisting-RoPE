@@ -52,6 +52,7 @@ class _RuntimeStats:
 
         self.scale_vec_logged:  bool = False
         self.joint_mask_logged: bool = False
+        self.last_printed_sigma: Optional[float] = None
 
         # Parameterization detection: tracks whether apply_model is x0 or velocity
         self.parameterization: str = 'unknown'
@@ -497,6 +498,14 @@ def _untwist_print_rope_scale_debug(
     if not cfg.get('enabled', False) or int(cfg.get('cross_batch_target_batch', 0)) <= 0:
         return
 
+    sigma = float(cfg.get('sigma', 0.0))
+    if stats is not None:
+        last_sigma = getattr(stats, 'last_printed_sigma', None)
+        if last_sigma is not None and abs(last_sigma - sigma) < 1e-6:
+            cfg['_rope_scale_debug_printed'] = True
+            return
+        stats.last_printed_sigma = sigma
+
     cfg['_rope_scale_debug_printed'] = True
 
     try:
@@ -517,7 +526,6 @@ def _untwist_print_rope_scale_debug(
             axis1_plus = flat.new_empty((0,))
 
         progress = float(cfg.get('progress', 0.0))
-        sigma = float(cfg.get('sigma', 0.0))
         low_scale = float(cfg.get('_debug_low_scale', 0.0))
         high_scale = float(cfg.get('_debug_high_scale', 0.0))
         axis0_rope_mode = _untwist_coerce_axis0_rope_mode(
@@ -549,8 +557,20 @@ def _untwist_print_rope_scale_debug_from_cfg(
     The actual scale-vector builder stays in the main module and is passed in here
     so verbose_prints owns the formatting/printing without creating import cycles.
     """
+    if not _coerce_bool(getattr(stats, 'verbose', False)):
+        return
     if not isinstance(cfg, dict) or cfg.get('_rope_scale_debug_printed', False):
         return
+    if not cfg.get('enabled', False) or int(cfg.get('cross_batch_target_batch', 0)) <= 0:
+        return
+
+    sigma = float(cfg.get('sigma', 0.0))
+    if stats is not None:
+        last_sigma = getattr(stats, 'last_printed_sigma', None)
+        if last_sigma is not None and abs(last_sigma - sigma) < 1e-6:
+            cfg['_rope_scale_debug_printed'] = True
+            return
+
     if not callable(build_frequency_scale_vector):
         raise RuntimeError('RoPE scale debug requires callable build_frequency_scale_vector.')
     try:
