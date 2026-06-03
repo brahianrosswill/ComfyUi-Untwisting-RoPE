@@ -22,7 +22,7 @@ Untwisting RoPE patches the model's attention layers to let the target image att
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `rf_inversion` | *(optional)* | Fetches the inverted noisy latents created by the `RF Inversion` node. |
+| `rf_inversion` | — | Fetches the inverted noisy latents created by the `RF Inversion` node. |
 | `beta` | `50.00` | Controls the steepness of the frequency scale curve. Higher values prevent the model from copying the reference image too closely. |
 | `high_scale` | `1.05`  | Scale applied to high-frequency components. The higher the value, the more the final image will resemble the structure of the reference image.|
 | `low_scale` | `3.0` | Scale applied to low-frequency components. Basically controls the strength of the style transfer. |
