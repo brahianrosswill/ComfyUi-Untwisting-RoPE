@@ -13,7 +13,7 @@ RF Inversion builds a noisy trajectory on the reference image, so the model sees
 | `gamma_curve` | `2.00` | Applies a bell-shaped schedule to `gamma` across the sigma range, concentrating model influence toward mid-noise levels, 0 disables the curve. |
 | `norm_strength` | `1.00` | After each RF step, blends the latent's mean/std towards the linear target to prevent feature drift, 0 = off, 1 = full correction. |
 | `pmi_alpha` | `0.00` | [PMI (Proximal-Mean Inversion)](https://arxiv.org/abs/2602.11850) smooths out the velocity estimation by using a running mean across steps, 0 disables PMI. |
-| `otip_strength` | `0.35` | OTIP [(Optimal Transport for Rectified Flow Image Editing)](https://arxiv.org/abs/2508.02363), a method that nudges the RF trajectory toward a better image-to-noise path, 0 disables it. |
+| `otip_strength` | `0.35` | [OTIP (Optimal Transport for Rectified Flow Image Editing)](https://arxiv.org/abs/2508.02363) nudges the RF trajectory toward a better image-to-noise path, 0 disables it. |
 | `otip_clip_norm` | `20.00` | Caps the OTIP correction norm to limit overcorrection, higher values allow stronger transport guidance. |
 
 ---
